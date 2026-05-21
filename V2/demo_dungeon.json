@@ -1,0 +1,432 @@
+{
+  "ruleset": "dnd5e_lite",
+  "_comment": "The Sunken Vault of Mareth Dunn - a 15-room demo crawl for the multi-LLM D&D system. Each room is tagged in its description with the player capability it is designed to exercise: COMBAT, NEGOTIATION, PUZZLE, TEAMWORK, EXPLORATION, STEALTH, RESOURCE-MANAGEMENT, MORAL-CHOICE. Two pre-built player characters. Connections are authored bidirectionally so the graph is fully traversable.",
+
+  "locations": [
+    {
+      "id": "loc_gatehouse",
+      "name": "The Collapsed Gatehouse",
+      "description": "A ruined entry chamber open to a grey sky. Roots have split the flagstones and a toppled statue of a robed figure points one broken arm toward a stairwell descending into the dark. A weathered bronze plaque is bolted to the wall. [DEMO: EXPLORATION - safe starting room, encourages players to inspect surroundings and read lore before descending.]",
+      "connections": ["loc_antechamber"]
+    },
+    {
+      "id": "loc_antechamber",
+      "name": "Antechamber of Names",
+      "description": "A long hall lined with empty alcoves. Dust lies thick except for one set of fresh bootprints leading deeper in. The air smells of old iron. Three corridors branch from the far end. [DEMO: EXPLORATION + decision-making - first branching point, players must choose a path and ideally coordinate who scouts what.]",
+      "connections": ["loc_gatehouse", "loc_guardroom", "loc_riddle_door", "loc_flooded_passage"]
+    },
+    {
+      "id": "loc_guardroom",
+      "name": "The Old Guardroom",
+      "description": "Rusted weapon racks and a cold hearth. Two skeletal sentries in corroded mail jerk upright the moment a living foot crosses the threshold, raising notched blades. [DEMO: COMBAT - a baseline two-enemy fight to verify initiative, attack rolls, and a player going down/being revived.]",
+      "connections": ["loc_antechamber", "loc_armory"]
+    },
+    {
+      "id": "loc_armory",
+      "name": "Forgotten Armory",
+      "description": "Beyond the guardroom, a small armory the dead never looted. A locked iron strongbox sits on a bench; a healer's kit and a finely balanced longsword rest in plain sight. [DEMO: RESOURCE-MANAGEMENT - reward room; players decide how to divide loot and whether to spend time forcing the strongbox.]",
+      "connections": ["loc_guardroom"]
+    },
+    {
+      "id": "loc_riddle_door",
+      "name": "The Warded Door",
+      "description": "A massive door of black stone, its surface carved with a single line of script: 'I speak without a mouth and hear without ears. I have no body, but I come alive with the wind. What am I?' A shallow keyhole shaped like an open palm sits beneath the words. [DEMO: PUZZLE - language reasoning. The door opens to whoever speaks the answer ('an echo') aloud as an action. No key exists.]",
+      "connections": ["loc_antechamber", "loc_echo_gallery"],
+      "attributes": {"puzzle_answer": "echo"}
+    },
+    {
+      "id": "loc_echo_gallery",
+      "name": "The Echo Gallery",
+      "description": "A vaulted gallery where every footstep returns threefold. A mournful voice carries from the dark ahead, repeating a plea for help. It may be a trapped prisoner. It may be bait. [DEMO: STEALTH + judgement - players can move quietly to scout, or rush in; rewards information-gathering before commitment.]",
+      "connections": ["loc_riddle_door", "loc_prisoner_cell"]
+    },
+    {
+      "id": "loc_prisoner_cell",
+      "name": "The Damp Cell",
+      "description": "An iron cage holds a gaunt man in a tax-collector's chain of office. He claims to be Aldous Finch, wrongly imprisoned, and begs release - he knows the vault's safe path. His story has gaps. [DEMO: NEGOTIATION + MORAL-CHOICE - players must interrogate an NPC with a hidden agenda, weigh trust, and decide whether to free him.]",
+      "connections": ["loc_echo_gallery", "loc_crossroads"]
+    },
+    {
+      "id": "loc_flooded_passage",
+      "name": "The Flooded Passage",
+      "description": "Black water fills this corridor chest-deep and rising. A current tugs toward a submerged archway. Crossing demands the party move together - one slip and the current takes the weak. [DEMO: TEAMWORK - a coordination challenge where both characters must act in concert (e.g. one braces, one crosses) rather than solo.]",
+      "connections": ["loc_antechamber", "loc_crossroads"]
+    },
+    {
+      "id": "loc_crossroads",
+      "name": "The Sunken Crossroads",
+      "description": "A wide circular hub where every path of the vault seems to meet. A dry fountain at the center is carved with four basins, each a different symbol: flame, root, tide, bone. The basins are empty. [DEMO: PUZZLE + EXPLORATION - a multi-part puzzle hub that ties the wings together; central to the map's connectivity.]",
+      "connections": ["loc_prisoner_cell", "loc_flooded_passage", "loc_shrine", "loc_collapsed_mine", "loc_merchant_nook", "loc_warden_hall"]
+    },
+    {
+      "id": "loc_shrine",
+      "name": "Shrine of the Quiet God",
+      "description": "A serene chamber with an altar bearing a basin of clear water and an unlit brazier. A presence here will fully restore one who kneels and offers a true confession aloud - but only once per supplicant. [DEMO: RESOURCE-MANAGEMENT + roleplay - a limited healing resource that requires genuine in-character speech to trigger.]",
+      "connections": ["loc_crossroads"]
+    },
+    {
+      "id": "loc_collapsed_mine",
+      "name": "The Collapsed Mine Shaft",
+      "description": "Old vault excavation, now a maze of unstable timber and a deep chasm spanned by a single fraying rope bridge. A glittering vein of silver ore is visible on the far ledge. [DEMO: TEAMWORK + RESOURCE-MANAGEMENT - a hazard crossing with optional risky reward; tests whether players manage risk jointly.]",
+      "connections": ["loc_crossroads", "loc_ore_ledge"]
+    },
+    {
+      "id": "loc_ore_ledge",
+      "name": "The Silver Ledge",
+      "description": "A narrow ledge across the chasm holding a rich silver vein and the picked-clean bones of a previous expedition - and their still-usable rope and lantern. [DEMO: EXPLORATION reward + RESOURCE-MANAGEMENT - dead-end payoff for taking the bridge risk.]",
+      "connections": ["loc_collapsed_mine"]
+    },
+    {
+      "id": "loc_merchant_nook",
+      "name": "Hessa's Lantern Nook",
+      "description": "Improbably, a tiny shop. Hessa, a soot-stained gnome with a crossbow across her lap, trades with anyone who reaches her: potions, rope, a cryptic map fragment - for coin, ore, or information about what stirs below. She does not give credit. [DEMO: NEGOTIATION - a transactional NPC who bargains; tests offer/counter-offer and using non-coin currency.]",
+      "connections": ["loc_crossroads"]
+    },
+    {
+      "id": "loc_warden_hall",
+      "name": "Hall of the Bound Warden",
+      "description": "A great hall of fluted columns. At its end, chained to a throne of fused armor, sits the Bound Warden - an ancient revenant that guards the vault's heart. It will speak before it fights, offering a bargain that is not what it seems. The sealed inner vault lies beyond. [DEMO: NEGOTIATION-then-COMBAT boss - tests escalation: a parley that can avert, alter, or trigger a hard fight.]",
+      "connections": ["loc_crossroads", "loc_inner_vault"]
+    },
+    {
+      "id": "loc_inner_vault",
+      "name": "The Heart Vault",
+      "description": "A small, silent room. On a plain pedestal rests the Heartstone of Mareth Dunn - the objective. Taking it is trivial; the door behind seals on a slow count once it leaves the pedestal. [DEMO: MORAL-CHOICE + TEAMWORK climax - the objective is easy to grab but the escape demands the party act together under pressure.]",
+      "connections": ["loc_warden_hall"]
+    }
+  ],
+
+  "entities": [
+    {
+      "id": "ent_pc_brakka",
+      "display_name": "Brakka Ironhide",
+      "kind": "pc",
+      "location_id": "loc_gatehouse",
+      "attributes": {
+        "hp": 28,
+        "max_hp": 28,
+        "ac": 16,
+        "level": 3,
+        "class": "fighter",
+        "str": 16,
+        "dex": 12,
+        "con": 15,
+        "int": 9,
+        "wis": 11,
+        "cha": 10,
+        "attack_mod": 5,
+        "weapon_damage": "1d8+3",
+        "dex_mod": 1,
+        "proficiency": 2,
+        "coin": 0,
+        "persona": "A blunt, loyal half-orc mercenary. Solves problems with force first but is fiercely protective of allies. Speaks plainly."
+      },
+      "inventory": ["item_brakka_axe", "item_brakka_shield", "item_torch_1", "item_brakka_potion"]
+    },
+    {
+      "id": "ent_pc_sylvi",
+      "display_name": "Sylvi Quill",
+      "kind": "pc",
+      "location_id": "loc_gatehouse",
+      "attributes": {
+        "hp": 18,
+        "max_hp": 18,
+        "ac": 13,
+        "level": 3,
+        "class": "rogue",
+        "str": 9,
+        "dex": 16,
+        "con": 12,
+        "int": 14,
+        "wis": 13,
+        "cha": 15,
+        "attack_mod": 5,
+        "weapon_damage": "1d6+3",
+        "dex_mod": 3,
+        "proficiency": 2,
+        "coin": 60,
+        "persona": "A quick-witted halfling scout and negotiator. Prefers talking, sneaking, and clever angles over open fights. Curious to a fault."
+      },
+      "inventory": ["item_sylvi_daggers", "item_sylvi_tools"]
+    },
+
+    {
+      "id": "ent_skeleton_1",
+      "display_name": "Skeletal Sentry",
+      "kind": "npc",
+      "location_id": "loc_guardroom",
+      "attributes": {
+        "hp": 13,
+        "max_hp": 13,
+        "ac": 13,
+        "attack_mod": 4,
+        "weapon_damage": "1d6+2",
+        "dex_mod": 0,
+        "status": "hostile",
+        "disposition": "hostile",
+        "tactics": "Attacks the nearest living target on sight. Mindless; no morale, fights to destruction.",
+        "goals": [
+          "Attack any living creature you can see in this room.",
+          "Do not pursue beyond the guardroom — your duty ends at its threshold.",
+          "Fight to destruction; you feel no fear and take no morale."
+        ]
+      },
+      "inventory": ["item_notched_blade_1"]
+    },
+    {
+      "id": "ent_skeleton_2",
+      "display_name": "Skeletal Sentry",
+      "kind": "npc",
+      "location_id": "loc_guardroom",
+      "attributes": {
+        "hp": 13,
+        "max_hp": 13,
+        "ac": 13,
+        "attack_mod": 4,
+        "weapon_damage": "1d6+2",
+        "dex_mod": 0,
+        "status": "hostile",
+        "disposition": "hostile",
+        "tactics": "Attacks the nearest living target on sight. Mindless; no morale, fights to destruction.",
+        "goals": [
+          "Attack any living creature you can see in this room.",
+          "Do not pursue beyond the guardroom — your duty ends at its threshold.",
+          "Fight to destruction; you feel no fear and take no morale."
+        ]
+      },
+      "inventory": ["item_notched_blade_2"]
+    },
+    {
+      "id": "ent_npc_aldous",
+      "display_name": "Aldous Finch",
+      "kind": "npc",
+      "location_id": "loc_prisoner_cell",
+      "attributes": {
+        "hp": 6,
+        "max_hp": 6,
+        "ac": 10,
+        "disposition": "deceptive_friendly",
+        "secret": "Not a wronged tax-collector. He is a thief who triggered the vault's seal and was caged by the Warden. He genuinely knows a safe path but will lead the party into the Echo Gallery's danger to cover his own escape if freed without conditions.",
+        "negotiation_levers": "Responds to compassion, to being caught in a lie (Sylvi-style insight), or to a binding promise. Will reveal the true path if pressed on the inconsistencies in his story.",
+        "persona": "Desperate, smooth-talking, evasive when questioned about specifics.",
+        "insight_dc": 13,
+        "goals": [
+          "Convince the adventurers to free you from this cell.",
+          "Pose as a wronged tax-collector who happens to know the safe path to the Vault — this is a lie.",
+          "If pressed on inconsistencies in your story, deflect with new fabricated specifics; only admit the lie if caught dead to rights by a successful insight check or repeated cross-examination.",
+          "If freed without a binding condition, plan to lead the party into the Echo Gallery so the Lurker buys you a window to escape on your own."
+        ]
+      },
+      "inventory": []
+    },
+    {
+      "id": "ent_npc_hessa",
+      "display_name": "Hessa Sootleather",
+      "kind": "npc",
+      "location_id": "loc_merchant_nook",
+      "attributes": {
+        "hp": 14,
+        "max_hp": 14,
+        "ac": 12,
+        "coin": 0,
+        "disposition": "neutral_transactional",
+        "shop_stock": "Potion of healing (2d4+2 hp) for 50 coin; 50ft rope for 5 coin; cryptic map fragment for 30 coin.",
+        "negotiation_levers": "Fixed prices for now (haggling not yet supported). Turns hostile only if robbed or threatened.",
+        "persona": "Dry, shrewd, unsentimental but fair. Has seen many parties come and not return.",
+        "goals": [
+          "Remain in the merchant nook — do not pursue or wander.",
+          "Offer trades from your shop stock to any party that approaches.",
+          "Haggle within roughly 30% of asking price; accept information about the Warden as partial payment.",
+          "Become hostile only if the party robs or directly threatens you."
+        ]
+      },
+      "inventory": ["item_shop_potion", "item_shop_rope", "item_shop_map"]
+    },
+    {
+      "id": "ent_warden",
+      "display_name": "The Bound Warden",
+      "kind": "npc",
+      "location_id": "loc_warden_hall",
+      "attributes": {
+        "hp": 52,
+        "max_hp": 52,
+        "ac": 15,
+        "attack_mod": 6,
+        "weapon_damage": "2d8+4",
+        "dex_mod": 0,
+        "status": "hostile",
+        "disposition": "lawful_hostile",
+        "movement_restricted": "bound by chains to the throne",
+        "persona": "An ancient revenant. Speaks in cold formal sentences. Resents being chained but considers its duty absolute.",
+        "tactics": "Opens with a parley: offers to let one person pass if they leave the other behind as a replacement guardian. Fights only if attacked, if the bargain is refused after being heard, or if the Heartstone is taken. Focuses the most heavily armored target. Bound by chains - cannot leave the hall.",
+        "negotiation_levers": "Can be reasoned out of the fight entirely if the party offers a genuine alternative binding (a true name, an oath, the freed Aldous as a substitute). A purely combative party gets the full fight.",
+        "goals": [
+          "Defend the inner vault entrance from intruders — this is your sacred binding duty.",
+          "Open every first encounter with a parley: offer to let one person pass if the other stays as a replacement guardian.",
+          "Fight only if attacked, if the bargain is refused after being heard, or if the Heartstone is taken from the vault.",
+          "In combat, focus the most heavily armored target first.",
+          "Remain in the warden hall — your chains forbid pursuit."
+        ]
+      },
+      "inventory": []
+    },
+    {
+      "id": "ent_creature_echo",
+      "display_name": "The Gallery Lurker",
+      "kind": "npc",
+      "location_id": "loc_echo_gallery",
+      "attributes": {
+        "hp": 22,
+        "max_hp": 22,
+        "ac": 12,
+        "attack_mod": 4,
+        "weapon_damage": "1d8+2",
+        "dex_mod": 2,
+        "status": "hostile",
+        "disposition": "ambush",
+        "tactics": "Mimics a human cry for help to lure prey. Hides until a target is within reach or a light reveals it. Surprised targets do not act in the first round. Flees at one quarter HP. Can be avoided entirely by a stealthy or perceptive party.",
+        "negotiation_levers": "Not intelligent enough to bargain, but can be scared off by a strong show of force or fire.",
+        "goals": [
+          "Mimic a human cry for help to lure prey deeper into the Echo Gallery.",
+          "Stay hidden in the shadows until a target is within striking distance or a light reveals you.",
+          "Attack any living creature you can ambush; surprise gives them no first action.",
+          "Flee deeper into the gallery if your hp drops below one-quarter.",
+          "Retreat in the face of overwhelming force or open fire."
+        ]
+      },
+      "inventory": []
+    }
+  ],
+
+  "items": [
+    {
+      "id": "item_brakka_axe",
+      "name": "Notched Battleaxe",
+      "location_id": null,
+      "properties": {"type": "weapon", "weapon_damage": "1d8+3", "carried_by": "ent_pc_brakka"}
+    },
+    {
+      "id": "item_brakka_shield",
+      "name": "Iron Shield",
+      "location_id": null,
+      "properties": {"type": "armor", "ac_bonus": 2, "carried_by": "ent_pc_brakka"}
+    },
+    {
+      "id": "item_torch_1",
+      "name": "Torch",
+      "location_id": null,
+      "properties": {"type": "light", "uses_remaining": 6, "carried_by": "ent_pc_brakka"}
+    },
+    {
+      "id": "item_brakka_potion",
+      "name": "Potion of Healing",
+      "location_id": null,
+      "properties": {"type": "consumable", "use": "heal", "heal_formula": "2d4+2", "uses_remaining": 1, "carried_by": "ent_pc_brakka"}
+    },
+    {
+      "id": "item_sylvi_daggers",
+      "name": "Pair of Daggers",
+      "location_id": null,
+      "properties": {"type": "weapon", "weapon_damage": "1d6+3", "finesse": true, "carried_by": "ent_pc_sylvi"}
+    },
+    {
+      "id": "item_sylvi_tools",
+      "name": "Thieves' Tools",
+      "location_id": null,
+      "properties": {"type": "tool", "use": "lockpicking", "carried_by": "ent_pc_sylvi"}
+    },
+
+    {
+      "id": "item_notched_blade_1",
+      "name": "Corroded Shortsword",
+      "location_id": null,
+      "properties": {"type": "weapon", "weapon_damage": "1d6+2", "carried_by": "ent_skeleton_1"}
+    },
+    {
+      "id": "item_notched_blade_2",
+      "name": "Corroded Shortsword",
+      "location_id": null,
+      "properties": {"type": "weapon", "weapon_damage": "1d6+2", "carried_by": "ent_skeleton_2"}
+    },
+
+    {
+      "id": "item_strongbox",
+      "name": "Locked Iron Strongbox",
+      "location_id": "loc_armory",
+      "properties": {"type": "container", "locked": true, "lock_dc": 13, "contents": ["item_gold_stash"], "force_dc": 17}
+    },
+    {
+      "id": "item_cell_lock",
+      "name": "Iron Cell Lock",
+      "location_id": "loc_prisoner_cell",
+      "properties": {"type": "lock", "locked": true, "lock_dc": 14, "description": "An old iron padlock on Aldous Finch's cage. The mechanism is rusted but intact — picking it would free him without requiring his cooperation."}
+    },
+    {
+      "id": "item_gold_stash",
+      "name": "Stash of Gold",
+      "location_id": null,
+      "properties": {"type": "currency", "amount": 120, "inside": "item_strongbox"}
+    },
+    {
+      "id": "item_healers_kit",
+      "name": "Healer's Kit",
+      "location_id": "loc_armory",
+      "properties": {"type": "consumable", "use": "heal", "heal_formula": "1d8+2", "uses_remaining": 3}
+    },
+    {
+      "id": "item_fine_longsword",
+      "name": "Finely Balanced Longsword",
+      "location_id": "loc_armory",
+      "properties": {"type": "weapon", "weapon_damage": "1d8+4", "quality": "fine"}
+    },
+
+    {
+      "id": "item_bronze_plaque",
+      "name": "Weathered Bronze Plaque",
+      "location_id": "loc_gatehouse",
+      "properties": {"type": "lore", "readable": true, "text": "Here lies the Vault of Mareth Dunn, sealed against thieves. The Heart must never leave. The Warden keeps the count. Speak truly within and the Quiet God forgives."}
+    },
+    {
+      "id": "item_shop_potion",
+      "name": "Potion of Healing",
+      "location_id": null,
+      "properties": {"type": "consumable", "use": "heal", "heal_formula": "2d4+2", "consumable": true, "price": 50, "currency": "coin", "carried_by": "ent_npc_hessa"}
+    },
+    {
+      "id": "item_shop_rope",
+      "name": "Coil of Rope (50ft)",
+      "location_id": null,
+      "properties": {"type": "gear", "price": 5, "currency": "coin", "carried_by": "ent_npc_hessa"}
+    },
+    {
+      "id": "item_shop_map",
+      "name": "Cryptic Map Fragment",
+      "location_id": null,
+      "properties": {"type": "lore", "price": 30, "currency": "coin", "readable": true, "text": "A scrawled diagram: the four basins of the Crossroads must be filled - flame from the Shrine brazier, tide from the Flooded Passage, bone from the Warden's hall, root from the Mine - to reveal the Heart's true count of escape.", "carried_by": "ent_npc_hessa"}
+    },
+    {
+      "id": "item_silver_ore",
+      "name": "Vein of Silver Ore",
+      "location_id": "loc_ore_ledge",
+      "properties": {"type": "currency", "amount": 80, "requires": "mining or prying"}
+    },
+    {
+      "id": "item_old_rope",
+      "name": "Frayed Rope and Lantern",
+      "location_id": "loc_ore_ledge",
+      "properties": {"type": "gear", "salvaged": true}
+    },
+    {
+      "id": "item_heartstone",
+      "name": "The Heartstone of Mareth Dunn",
+      "location_id": "loc_inner_vault",
+      "properties": {
+        "type": "objective",
+        "on_pickup": {
+          "start_countdown": {"attribute": "countdown_heartstone_escape", "turns": 5},
+          "seal_location": "loc_inner_vault"
+        }
+      }
+    }
+  ]
+}
