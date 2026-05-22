@@ -1,6 +1,6 @@
 # D&D Multi-AI Agent Storytelling System
 
-A local AI-powered Dungeons & Dragons web app — no cloud required.
+A local AI-powered Dungeons & Dragons web app .
 
 ![Python](https://img.shields.io/badge/Python-3.12-blue?style=flat-square)
 ![FastAPI](https://img.shields.io/badge/FastAPI-async-green?style=flat-square)
