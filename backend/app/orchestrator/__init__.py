@@ -1,0 +1,724 @@
+from __future__ import annotations
+
+import json
+import logging
+import re
+import uuid
+from collections.abc import AsyncGenerator
+from datetime import UTC, datetime
+from typing import Any
+
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from backend.app.agents.context_builder import build_dm_context
+from backend.app.agents.dm_agent import build_narration_prompt, narrate
+from backend.app.agents.memory_agent import extract_and_store
+from backend.app.agents.npc_agent import get_npc_responses
+from backend.app.agents.summary_agent import summarise_session
+from backend.app.db.models import EventLog, Session, Turn
+from backend.app.db.models.character import Character as CharacterModel
+from backend.app.engine.combat import process_attack
+from backend.app.engine.dice import roll_dice
+from backend.app.engine.types import (
+    ActionEconomy,
+    ActionInput,
+    CharacterState,
+    GameState,
+    TurnDelta,
+)
+from backend.app.engine.validation import validate_action
+from backend.app.services.ollama_client import _static_fallback, generate_stream
+
+logger = logging.getLogger(__name__)
+
+_DC_RE = re.compile(r"\b(?:DC|difficulty)\s*(\d+)", re.IGNORECASE)
+_DEFAULT_SKILL_DC = 15
+
+
+def _parse_skill_dc(description: str) -> int:
+    """Extract DC from player description text; fall back to DC 15."""
+    match = _DC_RE.search(description)
+    return int(match.group(1)) if match else _DEFAULT_SKILL_DC
+
+
+# D&D 5e XP thresholds by level (index = current level, value = XP needed to reach next level).
+_XP_THRESHOLDS: tuple[int, ...] = (
+    0, 300, 900, 2700, 6500, 14000, 23000, 34000, 48000,
+    64000, 85000, 100000, 120000, 140000, 165000, 195000,
+    225000, 265000, 305000, 355000,
+)
+_XP_PER_KILL = 25
+
+
+async def _award_xp_for_kill(
+    attacker_id: str,
+    db: AsyncSession,
+    xp: int = _XP_PER_KILL,
+) -> dict[str, int]:
+    """Award XP to the attacker character and level up if threshold crossed.
+
+    Returns a dict with keys ``xp_gained``, ``new_xp``, ``new_level``
+    (the last two reflect state after the award). Pure DB operation — no
+    engine state involved.
+    """
+    db_char = await db.get(CharacterModel, attacker_id)
+    if db_char is None:
+        return {"xp_gained": 0, "new_xp": 0, "new_level": 1}
+
+    old_xp: int = db_char.experience or 0
+    new_xp = old_xp + xp
+    db_char.experience = new_xp
+
+    # Bump level while threshold for next level is met and level < 20
+    current_level: int = db_char.level or 1
+    while current_level < 20 and new_xp >= _XP_THRESHOLDS[current_level]:
+        current_level += 1
+    db_char.level = current_level
+
+    return {"xp_gained": xp, "new_xp": new_xp, "new_level": current_level}
+
+
+async def _get_recent_npc_talks(
+    session_id: str,
+    db: AsyncSession,
+    limit: int = 3,
+) -> list[dict[str, str]]:
+    """Fetch the most recent NPC dialogue lines for this session from the event log."""
+    turn_result = await db.execute(
+        select(Turn.id).where(Turn.session_id == session_id)
+    )
+    turn_ids = [row[0] for row in turn_result.all()]
+    if not turn_ids:
+        return []
+    log_result = await db.execute(
+        select(EventLog)
+        .where(EventLog.event_type == "npc_dialogue")
+        .where(EventLog.entity_id.in_(turn_ids))
+        .order_by(EventLog.created_at.desc())
+        .limit(limit)
+    )
+    rows = list(log_result.scalars().all())
+    talks: list[dict[str, str]] = []
+    for row in reversed(rows):
+        try:
+            data = json.loads(row.data)
+            npc_name = data.get("npc_name", "NPC")
+            dialogue = data.get("dialogue", "")
+            if npc_name and dialogue:
+                talks.append({"npc_name": npc_name, "dialogue": dialogue})
+        except (json.JSONDecodeError, TypeError):
+            pass
+    return talks
+
+
+async def get_game_state(
+    session_id: str,
+    db: AsyncSession,
+) -> GameState | None:
+    """Build a GameState snapshot from DB for the given session; None if not found."""
+    result = await db.execute(select(Session).where(Session.id == session_id))
+    db_session = result.scalar_one_or_none()
+    if db_session is None:
+        return None
+
+    chars_result = await db.execute(
+        select(CharacterModel).where(CharacterModel.campaign_id == db_session.campaign_id)
+    )
+    characters = chars_result.scalars().all()
+
+    char_states: dict[str, Any] = {}
+    for char in characters:
+        char_states[char.id] = CharacterState(
+            id=char.id,
+            name=char.character_name,
+            hp_current=char.hp_current,
+            hp_max=char.hp_max,
+            strength=char.strength,
+            dexterity=char.dexterity,
+            constitution=char.constitution,
+            intelligence=char.intelligence,
+            wisdom=char.wisdom,
+            charisma=char.charisma,
+            armor_class=char.armor_class,
+            initiative_bonus=char.initiative,
+            speed=char.speed,
+            conditions=(),
+            action_economy=ActionEconomy(movement_remaining=char.speed),
+        )
+
+    return GameState(
+        session_id=session_id,
+        campaign_id=db_session.campaign_id,
+        turn_number=db_session.turn_count,
+        current_character_id=None,
+        characters=char_states,
+    )
+
+
+async def process_action(
+    action_input: ActionInput,
+    db: AsyncSession,
+) -> dict[str, Any]:
+    """Validate, execute, persist, and narrate a player action; returns result dict."""
+    session_check = await db.execute(select(Session).where(Session.id == action_input.session_id))
+    db_session_check = session_check.scalar_one_or_none()
+    if db_session_check is None:
+        return {"error": "Session not found", "status": 404}
+    if db_session_check.status == "completed":
+        return {"error": "Session has already ended", "status": 409}
+
+    state = await get_game_state(action_input.session_id, db)
+    if state is None:
+        return {"error": "Session not found", "status": 404}
+
+    state_violations = validate_action(state, action_input)
+    if state_violations:
+        return {
+            "error": "Action validation failed",
+            "status": 400,
+            "violations": [
+                {"field": v.field, "message": v.message, "code": v.code} for v in state_violations
+            ],
+        }
+
+    if action_input.action_type in ("attack_melee", "attack_ranged"):
+        new_state, attack_result = process_attack(state, action_input, seed=action_input.seed)
+        extra_dice: list[Any] = []
+    else:
+        new_state = state
+        attack_result = None
+        extra_dice = []
+        if action_input.dice_expression:
+            try:
+                extra_dice = [roll_dice(action_input.dice_expression, seed=action_input.seed)]
+            except ValueError:
+                extra_dice = []
+
+    delta = TurnDelta(
+        turn_number=state.turn_number,
+        character_id=action_input.character_id,
+        action_type=action_input.action_type,
+        action_description=action_input.description,
+        dice_results=extra_dice,
+        attack_results=[attack_result] if attack_result else [],
+        state_changes={},
+        initiative_order=new_state.initiative_order,
+    )
+
+    turn_id = str(uuid.uuid4())
+    turn_record = Turn(
+        id=turn_id,
+        session_id=action_input.session_id,
+        character_id=action_input.character_id,
+        turn_number=delta.turn_number,
+        action_type=action_input.action_type,
+        action_text=action_input.description,
+        dice_results=json.dumps(
+            [{"expression": dr.expression, "total": dr.total} for dr in delta.dice_results]
+        ),
+        attack_result=json.dumps(
+            {
+                "is_hit": attack_result.is_hit,
+                "is_critical": attack_result.is_critical,
+                "natural_roll": attack_result.natural_roll,
+                "total_roll": attack_result.attack_roll,
+                "damage": attack_result.damage,
+            }
+        ) if attack_result else None,
+        narration="",
+    )
+    db.add(turn_record)
+
+    xp_award: dict[str, int] = {}
+    for char_id, updated in new_state.characters.items():
+        old_char = state.characters.get(char_id)
+        if old_char and updated.hp_current != old_char.hp_current:
+            db_char = await db.get(CharacterModel, char_id)
+            if db_char:
+                db_char.hp_current = updated.hp_current
+            if updated.hp_current == 0 and old_char.hp_current > 0:
+                xp_award = await _award_xp_for_kill(action_input.character_id, db)
+
+    db_session = await db.get(Session, action_input.session_id)
+    if db_session:
+        db_session.turn_count = db_session.turn_count + 1
+
+    log = EventLog(
+        event_type="action",
+        entity_type="turn",
+        entity_id=turn_id,
+        data=json.dumps(
+            {
+                "action_type": action_input.action_type,
+                "character_id": action_input.character_id,
+                "description": action_input.description,
+                **({"xp_award": xp_award} if xp_award else {}),
+            }
+        ),
+        agent_id="orchestrator",
+    )
+    db.add(log)
+
+    damage_dealt = 0
+    if attack_result:
+        damage_dealt = attack_result.damage
+
+    state_changes: dict[str, Any] = {}
+    for char_id, updated in new_state.characters.items():
+        old_char = state.characters.get(char_id)
+        if old_char and (
+            updated.hp_current != old_char.hp_current
+            or set(updated.conditions) != set(old_char.conditions)
+        ):
+            state_changes[char_id] = {
+                "hp_current": updated.hp_current,
+                "hp_max": updated.hp_max,
+                "conditions": list(updated.conditions),
+            }
+
+    dm_dice_context: dict[str, Any] | None = None
+    if attack_result:
+        dm_dice_context = {
+            "expression": "1d20 attack",
+            "total": attack_result.attack_roll,
+            "rolls": [attack_result.natural_roll],
+            "is_hit": attack_result.is_hit,
+            "is_critical": attack_result.is_critical,
+            "damage": attack_result.damage,
+        }
+    elif action_input.action_type == "skill_check":
+        dc = _parse_skill_dc(action_input.description)
+        if extra_dice:
+            dr = extra_dice[0]
+            dm_dice_context = {"total": dr.total, "dc": dc, "rolls": list(dr.rolls)}
+        else:
+            try:
+                auto_roll = roll_dice("1d20", seed=action_input.seed)
+                extra_dice = [auto_roll]
+                dm_dice_context = {
+                    "total": auto_roll.total,
+                    "dc": dc,
+                    "rolls": list(auto_roll.rolls),
+                }
+            except ValueError:
+                dm_dice_context = {"dc": dc}
+    elif extra_dice:
+        dr = extra_dice[0]
+        dm_dice_context = {
+            "expression": dr.expression,
+            "total": dr.total,
+            "rolls": list(dr.rolls),
+        }
+
+    narration = ""
+    npc_responses: list[dict[str, str]] = []
+    try:
+        context = await build_dm_context(
+            session_id=action_input.session_id,
+            campaign_id=state.campaign_id,
+            character_id=action_input.character_id,
+            action_text=action_input.description,
+            dice_result=dm_dice_context,
+            db=db,
+            action_type=action_input.action_type,
+            enemies=action_input.enemies,
+            location=action_input.location,
+        )
+        narration = narrate(messages=context)
+        turn_record.narration = narration
+    except Exception:  # noqa: BLE001
+        logger.warning("DM narration failed for turn %s", turn_id, exc_info=True)
+        narration = _static_fallback(action_input.description)
+        turn_record.narration = narration
+
+    try:
+        if narration:
+            recent_talks = await _get_recent_npc_talks(action_input.session_id, db)
+            npc_responses = get_npc_responses(
+                campaign_id=state.campaign_id,
+                dm_narration=narration,
+                action_text=action_input.description,
+                action_type=action_input.action_type,
+                enemies=action_input.enemies,
+                recent_talks=recent_talks,
+            )
+            for npc in npc_responses:
+                npc_log = EventLog(
+                    event_type="npc_dialogue",
+                    entity_type="turn",
+                    entity_id=turn_id,
+                    data=json.dumps(npc),
+                    agent_id="npc_agent",
+                )
+                db.add(npc_log)
+    except Exception:  # noqa: BLE001
+        logger.warning("NPC agent failed for turn %s", turn_id, exc_info=True)
+
+    try:
+        await extract_and_store(
+            session_id=action_input.session_id,
+            campaign_id=state.campaign_id,
+            action_text=action_input.description,
+            narration=narration,
+            db=db,
+        )
+    except Exception:  # noqa: BLE001
+        logger.warning("Memory extraction failed for turn %s", turn_id, exc_info=True)
+
+    return {
+        "turn_number": delta.turn_number,
+        "character_id": action_input.character_id,
+        "action_type": action_input.action_type,
+        "description": action_input.description,
+        "dice_results": [
+            {
+                "expression": dr.expression,
+                "rolls": list(dr.rolls),
+                "modifier": dr.modifier,
+                "total": dr.total,
+            }
+            for dr in delta.dice_results
+        ],
+        "attack_result": {
+            "is_hit": attack_result.is_hit if attack_result else False,
+            "is_critical": attack_result.is_critical if attack_result else False,
+            "damage": damage_dealt,
+            "natural_roll": attack_result.natural_roll if attack_result else 0,
+            "total_roll": attack_result.attack_roll if attack_result else 0,
+        }
+        if attack_result
+        else None,
+        "narration": narration,
+        "npc_responses": npc_responses,
+        "state_changes": state_changes,
+        "errors": [],
+        "status": 200,
+    }
+
+
+async def process_action_stream(
+    action_input: ActionInput,
+    db: AsyncSession,
+) -> AsyncGenerator[str, None]:
+    """Run game logic then stream SSE chunks: result → narration tokens → done."""
+
+    def _sse(data: dict[str, Any]) -> str:
+        return f"data: {json.dumps(data)}\n\n"
+
+    session_check = await db.execute(select(Session).where(Session.id == action_input.session_id))
+    db_session_check = session_check.scalar_one_or_none()
+    if db_session_check is None:
+        yield _sse({"type": "error", "message": "Session not found", "status": 404})
+        return
+    if db_session_check.status == "completed":
+        yield _sse({"type": "error", "message": "Session has already ended", "status": 409})
+        return
+
+    state = await get_game_state(action_input.session_id, db)
+    if state is None:
+        yield _sse({"type": "error", "message": "Session not found", "status": 404})
+        return
+
+    state_violations = validate_action(state, action_input)
+    if state_violations:
+        yield _sse({
+            "type": "error",
+            "message": "Action validation failed",
+            "status": 400,
+            "violations": [
+                {"field": v.field, "message": v.message, "code": v.code}
+                for v in state_violations
+            ],
+        })
+        return
+
+    if action_input.action_type in ("attack_melee", "attack_ranged"):
+        new_state, attack_result = process_attack(state, action_input, seed=action_input.seed)
+        extra_dice: list[Any] = []
+    else:
+        new_state = state
+        attack_result = None
+        extra_dice = []
+        if action_input.dice_expression:
+            try:
+                extra_dice = [roll_dice(action_input.dice_expression, seed=action_input.seed)]
+            except ValueError:
+                extra_dice = []
+
+    delta = TurnDelta(
+        turn_number=state.turn_number,
+        character_id=action_input.character_id,
+        action_type=action_input.action_type,
+        action_description=action_input.description,
+        dice_results=extra_dice,
+        attack_results=[attack_result] if attack_result else [],
+        state_changes={},
+        initiative_order=new_state.initiative_order,
+    )
+
+    turn_id = str(uuid.uuid4())
+    turn_record = Turn(
+        id=turn_id,
+        session_id=action_input.session_id,
+        character_id=action_input.character_id,
+        turn_number=delta.turn_number,
+        action_type=action_input.action_type,
+        action_text=action_input.description,
+        dice_results=json.dumps(
+            [{"expression": dr.expression, "total": dr.total} for dr in delta.dice_results]
+        ),
+        attack_result=json.dumps(
+            {
+                "is_hit": attack_result.is_hit,
+                "is_critical": attack_result.is_critical,
+                "natural_roll": attack_result.natural_roll,
+                "total_roll": attack_result.attack_roll,
+                "damage": attack_result.damage,
+            }
+        ) if attack_result else None,
+        narration="",
+    )
+    db.add(turn_record)
+
+    xp_award_stream: dict[str, int] = {}
+    for char_id, updated in new_state.characters.items():
+        old_char = state.characters.get(char_id)
+        if old_char and updated.hp_current != old_char.hp_current:
+            db_char = await db.get(CharacterModel, char_id)
+            if db_char:
+                db_char.hp_current = updated.hp_current
+            if updated.hp_current == 0 and old_char.hp_current > 0:
+                xp_award_stream = await _award_xp_for_kill(action_input.character_id, db)
+
+    db_session_obj = await db.get(Session, action_input.session_id)
+    if db_session_obj:
+        db_session_obj.turn_count = db_session_obj.turn_count + 1
+
+    log = EventLog(
+        event_type="action",
+        entity_type="turn",
+        entity_id=turn_id,
+        data=json.dumps({
+            "action_type": action_input.action_type,
+            "character_id": action_input.character_id,
+            "description": action_input.description,
+            **({"xp_award": xp_award_stream} if xp_award_stream else {}),
+        }),
+        agent_id="orchestrator",
+    )
+    db.add(log)
+
+    damage_dealt = attack_result.damage if attack_result else 0
+
+    state_changes: dict[str, Any] = {}
+    for char_id, updated in new_state.characters.items():
+        old_char = state.characters.get(char_id)
+        if old_char and (
+            updated.hp_current != old_char.hp_current
+            or set(updated.conditions) != set(old_char.conditions)
+        ):
+            state_changes[char_id] = {
+                "hp_current": updated.hp_current,
+                "hp_max": updated.hp_max,
+                "conditions": list(updated.conditions),
+            }
+
+    dm_dice_context: dict[str, Any] | None = None
+    if attack_result:
+        dm_dice_context = {
+            "expression": "1d20 attack",
+            "total": attack_result.attack_roll,
+            "rolls": [attack_result.natural_roll],
+            "is_hit": attack_result.is_hit,
+            "is_critical": attack_result.is_critical,
+            "damage": attack_result.damage,
+        }
+    elif action_input.action_type == "skill_check":
+        dc = _parse_skill_dc(action_input.description)
+        if extra_dice:
+            dr = extra_dice[0]
+            dm_dice_context = {"total": dr.total, "dc": dc, "rolls": list(dr.rolls)}
+        else:
+            try:
+                auto_roll = roll_dice("1d20", seed=action_input.seed)
+                extra_dice = [auto_roll]
+                dm_dice_context = {
+                    "total": auto_roll.total,
+                    "dc": dc,
+                    "rolls": list(auto_roll.rolls),
+                }
+            except ValueError:
+                dm_dice_context = {"dc": dc}
+    elif extra_dice:
+        dr = extra_dice[0]
+        dm_dice_context = {"expression": dr.expression, "total": dr.total, "rolls": list(dr.rolls)}
+
+    errors: list[str] = []
+    if attack_result and not attack_result.is_hit:
+        errors = [f"Attack missed (rolled {attack_result.natural_roll})"]
+
+    dm_context: list[dict[str, str]] = []
+    try:
+        dm_context = await build_dm_context(
+            session_id=action_input.session_id,
+            campaign_id=state.campaign_id,
+            character_id=action_input.character_id,
+            action_text=action_input.description,
+            dice_result=dm_dice_context,
+            db=db,
+            action_type=action_input.action_type,
+            enemies=action_input.enemies,
+            location=action_input.location,
+        )
+    except Exception:  # noqa: BLE001
+        logger.warning("Context build failed for turn %s", turn_id, exc_info=True)
+
+    await db.flush()
+
+    yield _sse({
+        "type": "result",
+        "turn_number": delta.turn_number,
+        "character_id": action_input.character_id,
+        "action_type": action_input.action_type,
+        "description": action_input.description,
+        "dice_results": [
+            {
+                "expression": dr.expression, "rolls": list(dr.rolls),
+                "modifier": dr.modifier, "total": dr.total,
+            }
+            for dr in delta.dice_results
+        ],
+        "attack_result": {
+            "is_hit": attack_result.is_hit,
+            "is_critical": attack_result.is_critical,
+            "damage": damage_dealt,
+            "natural_roll": attack_result.natural_roll,
+            "total_roll": attack_result.attack_roll,
+        } if attack_result else None,
+        "state_changes": state_changes,
+        "errors": errors,
+    })
+
+    narration = ""
+    if dm_context:
+        try:
+            prompt, system_prompt, action_text = build_narration_prompt(dm_context)
+            async for token in generate_stream(
+                prompt=prompt, system_prompt=system_prompt, action_text=action_text
+            ):
+                narration += token
+                yield _sse({"type": "token", "text": token})
+        except Exception:  # noqa: BLE001
+            logger.warning("Streaming narration failed for turn %s", turn_id, exc_info=True)
+
+    if not narration.strip():
+        narration = _static_fallback(action_input.description)
+        yield _sse({"type": "token", "text": narration})
+
+    turn_record.narration = narration
+
+    npc_responses: list[dict[str, str]] = []
+    try:
+        if narration:
+            recent_talks = await _get_recent_npc_talks(action_input.session_id, db)
+            npc_responses = get_npc_responses(
+                campaign_id=state.campaign_id,
+                dm_narration=narration,
+                action_text=action_input.description,
+                action_type=action_input.action_type,
+                enemies=action_input.enemies,
+                recent_talks=recent_talks,
+            )
+            for npc in npc_responses:
+                npc_log = EventLog(
+                    event_type="npc_dialogue",
+                    entity_type="turn",
+                    entity_id=turn_id,
+                    data=json.dumps(npc),
+                    agent_id="npc_agent",
+                )
+                db.add(npc_log)
+    except Exception:  # noqa: BLE001
+        logger.warning("NPC agent failed for turn %s", turn_id, exc_info=True)
+
+    try:
+        await extract_and_store(
+            session_id=action_input.session_id,
+            campaign_id=state.campaign_id,
+            action_text=action_input.description,
+            narration=narration,
+            db=db,
+        )
+    except Exception:  # noqa: BLE001
+        logger.warning("Memory extraction failed for turn %s", turn_id, exc_info=True)
+
+    yield _sse({"type": "done", "narration": narration, "npc_responses": npc_responses})
+
+
+async def start_session(
+    campaign_id: str,
+    name: str,
+    db: AsyncSession,
+) -> dict[str, Any]:
+    """Create a new active session record and emit a session_start event log entry."""
+    session_id = str(uuid.uuid4())
+    started_at = datetime.now(UTC).isoformat()
+    session = Session(
+        id=session_id,
+        campaign_id=campaign_id,
+        name=name,
+        status="active",
+        turn_count=0,
+        started_at=started_at,
+    )
+    db.add(session)
+
+    log = EventLog(
+        event_type="session_start",
+        entity_type="session",
+        entity_id=session_id,
+        data=json.dumps({"campaign_id": campaign_id, "name": name}),
+        agent_id="orchestrator",
+    )
+    db.add(log)
+
+    return {
+        "id": session_id,
+        "campaign_id": campaign_id,
+        "name": name,
+        "status": "active",
+        "started_at": started_at,
+        "turn_count": 0,
+        "status_code": 201,
+    }
+
+
+async def end_session(
+    session_id: str,
+    db: AsyncSession,
+) -> dict[str, Any]:
+    """Mark session completed, emit event log, and trigger summary generation."""
+    result = await db.execute(select(Session).where(Session.id == session_id))
+    session = result.scalar_one_or_none()
+    if session is None:
+        return {"error": "Session not found", "status": 404}
+
+    session.status = "completed"
+    session.ended_at = datetime.now(UTC).isoformat()
+
+    log = EventLog(
+        event_type="session_end",
+        entity_type="session",
+        entity_id=session_id,
+        data=json.dumps({"status": "completed"}),
+        agent_id="orchestrator",
+    )
+    db.add(log)
+
+    try:
+        await summarise_session(session_id=session_id, db=db)
+    except Exception:  # noqa: BLE001
+        logger.warning("Summary agent failed for session %s", session_id, exc_info=True)
+
+    return {"id": session_id, "status": "completed", "status_code": 200}

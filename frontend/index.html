@@ -1,0 +1,1072 @@
+<!doctype html>
+<html lang="en" data-bs-theme="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>D&amp;D Storyteller</title>
+    <link
+      rel="icon"
+      href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='6' fill='%23100c06'/><text x='50%25' y='55%25' font-size='20' text-anchor='middle' dominant-baseline='middle' fill='%23d4af37'>⚔</text></svg>"
+    />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;500;600;700&family=Cinzel+Decorative:wght@400;700&family=EB+Garamond:ital,wght@0,400;0,500;1,400;1,500&family=Share+Tech+Mono&display=swap"
+      rel="stylesheet"
+    />
+    <link
+      rel="stylesheet"
+      href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css"
+    />
+    <link
+      rel="stylesheet"
+      href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css"
+    />
+    <link rel="stylesheet" href="css/style.css?v=200" />
+  </head>
+  <body>
+    <!-- ── App Shell ─────────────────────────────────────── -->
+    <nav class="navbar navbar-expand-lg dd-navbar" id="app-nav">
+      <div class="container-fluid px-4">
+        <a class="navbar-brand dd-brand" href="#/">
+          <span class="dd-brand-gem">✦</span>
+          <span class="dd-brand-text">D&amp;D Storyteller</span>
+          <span class="dd-brand-gem">✦</span>
+        </a>
+        <div class="ms-auto d-flex align-items-center gap-3">
+          <span
+            class="dd-status-dot"
+            id="backend-status"
+            title="Backend status"
+          ></span>
+          <span class="text-muted small" id="backend-label">connecting…</span>
+        </div>
+      </div>
+    </nav>
+
+    <main id="app-root" class="container-fluid px-4 py-4"></main>
+
+    <!-- ── Toasts ─────────────────────────────────────────── -->
+    <div
+      class="toast-container position-fixed bottom-0 end-0 p-3"
+      id="toast-container"
+    ></div>
+
+    <!-- ── Modal: Create Campaign ─────────────────────────── -->
+    <div
+      class="modal fade"
+      id="modal-new-campaign"
+      tabindex="-1"
+      aria-labelledby="modal-new-campaign-label"
+      aria-hidden="true"
+    >
+      <div class="modal-dialog">
+        <div class="modal-content dd-modal">
+          <div class="modal-header border-0">
+            <h5 class="modal-title" id="modal-new-campaign-label">
+              <i class="bi bi-map me-2 dd-gold"></i>New Campaign
+            </h5>
+            <button
+              type="button"
+              class="btn-close btn-close-white"
+              data-bs-dismiss="modal"
+              aria-label="Close"
+            ></button>
+          </div>
+          <div class="modal-body">
+            <form id="form-new-campaign" novalidate>
+              <div class="mb-3">
+                <label for="nc-name" class="form-label"
+                  >Campaign Name <span class="text-danger">*</span></label
+                >
+                <input
+                  type="text"
+                  class="form-control dd-input"
+                  id="nc-name"
+                  required
+                  maxlength="100"
+                  placeholder="The Lost Mines of Phandelver"
+                />
+                <div class="invalid-feedback">Campaign name is required.</div>
+              </div>
+              <div class="mb-3">
+                <label for="nc-setting" class="form-label">World Setting</label>
+                <input
+                  type="text"
+                  class="form-control dd-input"
+                  id="nc-setting"
+                  maxlength="200"
+                  placeholder="Forgotten Realms, 1492 DR"
+                />
+              </div>
+              <div class="mb-3">
+                <label for="nc-desc" class="form-label">Description</label>
+                <textarea
+                  class="form-control dd-input"
+                  id="nc-desc"
+                  rows="3"
+                  maxlength="500"
+                  placeholder="An epic adventure begins…"
+                ></textarea>
+              </div>
+            </form>
+          </div>
+          <div class="modal-footer border-0">
+            <button
+              type="button"
+              class="btn btn-secondary"
+              data-bs-dismiss="modal"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              class="btn dd-btn-primary"
+              id="btn-create-campaign"
+            >
+              <i class="bi bi-plus-circle me-1"></i>Create Campaign
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Modal: Create Character ────────────────────────── -->
+    <div
+      class="modal fade"
+      id="modal-new-character"
+      tabindex="-1"
+      aria-labelledby="modal-new-character-label"
+      aria-hidden="true"
+    >
+      <div class="modal-dialog modal-lg">
+        <div class="modal-content dd-modal">
+          <div class="modal-header border-0">
+            <h5 class="modal-title" id="modal-new-character-label">
+              <i class="bi bi-person-fill-add me-2 dd-gold"></i>New Character
+            </h5>
+            <button
+              type="button"
+              class="btn-close btn-close-white"
+              data-bs-dismiss="modal"
+              aria-label="Close"
+            ></button>
+          </div>
+          <div class="modal-body">
+            <form id="form-new-character" novalidate>
+              <div class="row g-3">
+                <div class="col-md-6">
+                  <label for="nch-pname" class="form-label">Player Name</label>
+                  <input
+                    type="text"
+                    class="form-control dd-input"
+                    id="nch-pname"
+                    maxlength="80"
+                    placeholder="Your name"
+                  />
+                </div>
+                <div class="col-md-6">
+                  <label for="nch-cname" class="form-label"
+                    >Character Name <span class="text-danger">*</span></label
+                  >
+                  <input
+                    type="text"
+                    class="form-control dd-input"
+                    id="nch-cname"
+                    required
+                    maxlength="80"
+                    placeholder="Aragorn"
+                  />
+                  <div class="invalid-feedback">
+                    Character name is required.
+                  </div>
+                </div>
+                <div class="col-md-4">
+                  <label for="nch-race" class="form-label">Race</label>
+                  <input
+                    type="text"
+                    class="form-control dd-input"
+                    id="nch-race"
+                    maxlength="40"
+                    placeholder="Human"
+                  />
+                </div>
+                <div class="col-md-4">
+                  <label for="nch-class" class="form-label">Class</label>
+                  <input
+                    type="text"
+                    class="form-control dd-input"
+                    id="nch-class"
+                    maxlength="40"
+                    placeholder="Fighter"
+                  />
+                </div>
+                <div class="col-md-4">
+                  <label for="nch-level" class="form-label">Level</label>
+                  <input
+                    type="number"
+                    class="form-control dd-input"
+                    id="nch-level"
+                    min="1"
+                    max="20"
+                    value="1"
+                  />
+                </div>
+                <div class="col-12">
+                  <hr class="dd-divider" />
+                  <div class="d-flex align-items-center justify-content-between mb-1">
+                    <p class="text-muted small mb-0">Ability Scores</p>
+                    <button type="button" class="btn btn-xs dd-btn-primary" id="btn-roll-stats"
+                      title="Roll 4d6 drop lowest for each ability score"
+                      style="font-size:0.7rem;padding:0.15rem 0.6rem;">
+                      <i class="bi bi-dice-5 me-1"></i>Roll 4d6
+                    </button>
+                  </div>
+                  <div id="rolled-stats-preview" style="display:none;font-size:0.68rem;color:var(--dd-text-muted);margin-bottom:0.4rem;font-family:var(--dd-font-mono);"></div>
+                </div>
+                <div class="col-md-2 col-4">
+                  <label for="nch-str" class="form-label">STR</label>
+                  <input
+                    type="number"
+                    class="form-control dd-input text-center"
+                    id="nch-str"
+                    min="1"
+                    max="30"
+                    value="10"
+                  />
+                </div>
+                <div class="col-md-2 col-4">
+                  <label for="nch-dex" class="form-label">DEX</label>
+                  <input
+                    type="number"
+                    class="form-control dd-input text-center"
+                    id="nch-dex"
+                    min="1"
+                    max="30"
+                    value="10"
+                  />
+                </div>
+                <div class="col-md-2 col-4">
+                  <label for="nch-con" class="form-label">CON</label>
+                  <input
+                    type="number"
+                    class="form-control dd-input text-center"
+                    id="nch-con"
+                    min="1"
+                    max="30"
+                    value="10"
+                  />
+                </div>
+                <div class="col-md-2 col-4">
+                  <label for="nch-int" class="form-label">INT</label>
+                  <input
+                    type="number"
+                    class="form-control dd-input text-center"
+                    id="nch-int"
+                    min="1"
+                    max="30"
+                    value="10"
+                  />
+                </div>
+                <div class="col-md-2 col-4">
+                  <label for="nch-wis" class="form-label">WIS</label>
+                  <input
+                    type="number"
+                    class="form-control dd-input text-center"
+                    id="nch-wis"
+                    min="1"
+                    max="30"
+                    value="10"
+                  />
+                </div>
+                <div class="col-md-2 col-4">
+                  <label for="nch-cha" class="form-label">CHA</label>
+                  <input
+                    type="number"
+                    class="form-control dd-input text-center"
+                    id="nch-cha"
+                    min="1"
+                    max="30"
+                    value="10"
+                  />
+                </div>
+                <div class="col-12">
+                  <hr class="dd-divider" />
+                  <p class="text-muted small mb-0">Combat Stats</p>
+                </div>
+                <div class="col-md-3">
+                  <label for="nch-ac" class="form-label">Armor Class</label>
+                  <input
+                    type="number"
+                    class="form-control dd-input text-center"
+                    id="nch-ac"
+                    min="1"
+                    max="30"
+                    value="10"
+                  />
+                </div>
+                <div class="col-md-3">
+                  <label for="nch-init" class="form-label"
+                    >Initiative Bonus</label
+                  >
+                  <input
+                    type="number"
+                    class="form-control dd-input text-center"
+                    id="nch-init"
+                    min="-5"
+                    max="10"
+                    value="0"
+                  />
+                </div>
+                <div class="col-md-3">
+                  <label for="nch-speed" class="form-label">Speed (ft)</label>
+                  <input
+                    type="number"
+                    class="form-control dd-input text-center"
+                    id="nch-speed"
+                    min="0"
+                    max="120"
+                    value="30"
+                  />
+                </div>
+                <div class="col-md-3">
+                  <label for="nch-hp" class="form-label"
+                    >Max HP
+                    <span class="dd-muted" style="font-size: 0.75rem"
+                      >(auto)</span
+                    ></label
+                  >
+                  <input
+                    type="number"
+                    class="form-control dd-input text-center"
+                    id="nch-hp"
+                    min="1"
+                    max="999"
+                    placeholder="auto"
+                  />
+                </div>
+              </div>
+              <div class="row g-3 mt-1">
+                <div class="col-12">
+                  <label for="nch-backstory" class="form-label"
+                    >Backstory
+                    <span class="dd-muted" style="font-size: 0.8rem"
+                      >(optional — guides the DM's narration)</span
+                    ></label
+                  >
+                  <textarea
+                    class="form-control dd-input"
+                    id="nch-backstory"
+                    rows="2"
+                    maxlength="400"
+                    placeholder="A former soldier seeking redemption… A young wizard expelled from the academy…"
+                  ></textarea>
+                </div>
+              </div>
+            </form>
+          </div>
+          <div class="modal-footer border-0">
+            <button
+              type="button"
+              class="btn btn-secondary"
+              data-bs-dismiss="modal"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              class="btn dd-btn-primary"
+              id="btn-create-character"
+            >
+              <i class="bi bi-person-plus me-1"></i>Add Character
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Modal: Start Session ───────────────────────────── -->
+    <div
+      class="modal fade"
+      id="modal-new-session"
+      tabindex="-1"
+      aria-labelledby="modal-new-session-label"
+      aria-hidden="true"
+    >
+      <div class="modal-dialog">
+        <div class="modal-content dd-modal">
+          <div class="modal-header border-0">
+            <h5 class="modal-title" id="modal-new-session-label">
+              <i class="bi bi-play-circle-fill me-2 dd-gold"></i>Start Session
+            </h5>
+            <button
+              type="button"
+              class="btn-close btn-close-white"
+              data-bs-dismiss="modal"
+              aria-label="Close"
+            ></button>
+          </div>
+          <div class="modal-body">
+            <div class="mb-3">
+              <label for="ns-name" class="form-label"
+                >Session Name <span class="text-danger">*</span></label
+              >
+              <input
+                type="text"
+                class="form-control dd-input"
+                id="ns-name"
+                required
+                maxlength="100"
+                placeholder="Session 1 — Into the Dungeon"
+              />
+              <div class="invalid-feedback">Session name is required.</div>
+            </div>
+          </div>
+          <div class="modal-footer border-0">
+            <button
+              type="button"
+              class="btn btn-secondary"
+              data-bs-dismiss="modal"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              class="btn dd-btn-success"
+              id="btn-start-session"
+            >
+              <i class="bi bi-play-fill me-1"></i>Begin Adventure
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Modal: Add Enemy ────────────────────────────────── -->
+    <div
+      class="modal fade"
+      id="modal-add-enemy"
+      tabindex="-1"
+      aria-labelledby="modal-add-enemy-label"
+      aria-hidden="true"
+    >
+      <div class="modal-dialog modal-sm">
+        <div class="modal-content dd-modal">
+          <div class="modal-header border-0">
+            <h5 class="modal-title" id="modal-add-enemy-label">
+              <i
+                class="bi bi-shield-exclamation me-2"
+                style="color: var(--dd-red)"
+              ></i
+              >Add Enemy
+            </h5>
+            <button
+              type="button"
+              class="btn-close btn-close-white"
+              data-bs-dismiss="modal"
+              aria-label="Close"
+            ></button>
+          </div>
+          <div class="modal-body">
+            <form id="form-add-enemy" novalidate>
+              <div class="mb-3">
+                <label for="enemy-name-input" class="form-label"
+                  >Name <span class="text-danger">*</span></label
+                >
+                <input
+                  type="text"
+                  class="form-control dd-input"
+                  id="enemy-name-input"
+                  required
+                  maxlength="60"
+                  placeholder="Goblin, Orc Warrior…"
+                />
+                <div class="invalid-feedback">Enemy name is required.</div>
+              </div>
+              <div class="mb-2">
+                <label for="enemy-hp-input" class="form-label">Max HP</label>
+                <input
+                  type="number"
+                  class="form-control dd-input"
+                  id="enemy-hp-input"
+                  min="1"
+                  max="999"
+                  value="20"
+                />
+              </div>
+              <div class="row g-2 mb-2">
+                <div class="col-6">
+                  <label for="enemy-ac-input" class="form-label"
+                    >Armor Class</label
+                  >
+                  <input
+                    type="number"
+                    class="form-control dd-input"
+                    id="enemy-ac-input"
+                    min="0"
+                    max="30"
+                    value="12"
+                  />
+                </div>
+                <div class="col-6">
+                  <label for="enemy-atk-input" class="form-label"
+                    >Attack Bonus</label
+                  >
+                  <input
+                    type="number"
+                    class="form-control dd-input"
+                    id="enemy-atk-input"
+                    min="-5"
+                    max="20"
+                    value="3"
+                  />
+                </div>
+              </div>
+              <!-- NPC Persona (optional, collapsed) -->
+              <div class="mt-2">
+                <button
+                  class="btn btn-sm btn-outline-secondary w-100 text-start"
+                  type="button"
+                  data-bs-toggle="collapse"
+                  data-bs-target="#enemy-persona-collapse"
+                  aria-expanded="false"
+                  aria-controls="enemy-persona-collapse"
+                  style="font-size: 0.78rem; color: var(--dd-silver)"
+                >
+                  <i class="bi bi-chevron-down me-1"></i>NPC Persona (optional)
+                </button>
+                <div class="collapse mt-2" id="enemy-persona-collapse">
+                  <div class="mb-2">
+                    <label
+                      for="enemy-persona-input"
+                      class="form-label"
+                      style="font-size: 0.8rem"
+                      >Personality</label
+                    >
+                    <input
+                      type="text"
+                      class="form-control dd-input"
+                      id="enemy-persona-input"
+                      maxlength="120"
+                      placeholder="Arrogant warlord, sly merchant…"
+                    />
+                  </div>
+                  <div class="mb-2">
+                    <label
+                      for="enemy-disposition-input"
+                      class="form-label"
+                      style="font-size: 0.8rem"
+                      >Disposition</label
+                    >
+                    <input
+                      type="text"
+                      class="form-control dd-input"
+                      id="enemy-disposition-input"
+                      maxlength="80"
+                      placeholder="hostile, wary, neutral…"
+                    />
+                  </div>
+                  <div class="mb-2">
+                    <label
+                      for="enemy-goals-input"
+                      class="form-label"
+                      style="font-size: 0.8rem"
+                      >Goals
+                      <span class="text-muted">(comma-separated)</span></label
+                    >
+                    <input
+                      type="text"
+                      class="form-control dd-input"
+                      id="enemy-goals-input"
+                      maxlength="200"
+                      placeholder="Protect the vault, capture the rogue…"
+                    />
+                  </div>
+                  <div class="mb-2">
+                    <label
+                      for="enemy-secret-input"
+                      class="form-label"
+                      style="font-size: 0.8rem"
+                      >Secret <span class="text-muted">(DM only)</span></label
+                    >
+                    <input
+                      type="text"
+                      class="form-control dd-input"
+                      id="enemy-secret-input"
+                      maxlength="200"
+                      placeholder="Fears fire, is actually a shapeshifter…"
+                    />
+                  </div>
+                  <div class="mb-2">
+                    <label
+                      for="enemy-levers-input"
+                      class="form-label"
+                      style="font-size: 0.8rem"
+                      >Negotiation Levers</label
+                    >
+                    <input
+                      type="text"
+                      class="form-control dd-input"
+                      id="enemy-levers-input"
+                      maxlength="200"
+                      placeholder="Offer gold, appeal to family honor…"
+                    />
+                  </div>
+                </div>
+              </div>
+            </form>
+          </div>
+          <div class="modal-footer border-0">
+            <button
+              type="button"
+              class="btn btn-secondary"
+              data-bs-dismiss="modal"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              class="btn dd-btn-primary"
+              id="btn-confirm-add-enemy"
+            >
+              <i class="bi bi-plus-circle me-1"></i>Add to Tracker
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Modal: Edit Campaign ─────────────────────────────── -->
+    <div
+      class="modal fade"
+      id="modal-edit-campaign"
+      tabindex="-1"
+      aria-labelledby="modal-edit-campaign-label"
+      aria-hidden="true"
+    >
+      <div class="modal-dialog">
+        <div class="modal-content dd-modal">
+          <div class="modal-header border-0">
+            <h5 class="modal-title" id="modal-edit-campaign-label">
+              <i class="bi bi-pencil-square me-2 dd-gold"></i>Edit Campaign
+            </h5>
+            <button
+              type="button"
+              class="btn-close btn-close-white"
+              data-bs-dismiss="modal"
+              aria-label="Close"
+            ></button>
+          </div>
+          <div class="modal-body">
+            <form id="form-edit-campaign" novalidate>
+              <div class="mb-3">
+                <label for="ec-name" class="form-label"
+                  >Campaign Name <span class="text-danger">*</span></label
+                >
+                <input
+                  type="text"
+                  class="form-control dd-input"
+                  id="ec-name"
+                  required
+                  maxlength="100"
+                />
+                <div class="invalid-feedback">Campaign name is required.</div>
+              </div>
+              <div class="mb-3">
+                <label for="ec-setting" class="form-label">World Setting</label>
+                <input
+                  type="text"
+                  class="form-control dd-input"
+                  id="ec-setting"
+                  maxlength="200"
+                />
+              </div>
+              <div class="mb-3">
+                <label for="ec-desc" class="form-label">Description</label>
+                <textarea
+                  class="form-control dd-input"
+                  id="ec-desc"
+                  rows="3"
+                  maxlength="500"
+                ></textarea>
+              </div>
+              <div class="mb-2">
+                <label for="ec-status" class="form-label">Status</label>
+                <select class="form-select dd-input" id="ec-status">
+                  <option value="active">Active</option>
+                  <option value="completed">Completed</option>
+                  <option value="archived">Archived</option>
+                </select>
+              </div>
+            </form>
+          </div>
+          <div class="modal-footer border-0">
+            <button
+              type="button"
+              class="btn btn-secondary"
+              data-bs-dismiss="modal"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              class="btn dd-btn-primary"
+              id="btn-save-campaign"
+            >
+              <i class="bi bi-floppy me-1"></i>Save Changes
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Modal: Edit Character ───────────────────────────── -->
+    <div
+      class="modal fade"
+      id="modal-edit-character"
+      tabindex="-1"
+      aria-labelledby="modal-edit-character-label"
+      aria-hidden="true"
+    >
+      <div class="modal-dialog modal-lg">
+        <div class="modal-content dd-modal">
+          <div class="modal-header border-0">
+            <h5 class="modal-title" id="modal-edit-character-label">
+              <i class="bi bi-person-gear me-2 dd-gold"></i>Edit Character
+            </h5>
+            <button
+              type="button"
+              class="btn-close btn-close-white"
+              data-bs-dismiss="modal"
+              aria-label="Close"
+            ></button>
+          </div>
+          <div class="modal-body">
+            <form id="form-edit-character" novalidate>
+              <div class="row g-3">
+                <div class="col-md-6">
+                  <label for="ech-pname" class="form-label">Player Name</label>
+                  <input
+                    type="text"
+                    class="form-control dd-input"
+                    id="ech-pname"
+                    maxlength="80"
+                  />
+                </div>
+                <div class="col-md-6">
+                  <label for="ech-cname" class="form-label"
+                    >Character Name <span class="text-danger">*</span></label
+                  >
+                  <input
+                    type="text"
+                    class="form-control dd-input"
+                    id="ech-cname"
+                    required
+                    maxlength="80"
+                  />
+                  <div class="invalid-feedback">
+                    Character name is required.
+                  </div>
+                </div>
+                <div class="col-md-4">
+                  <label for="ech-race" class="form-label">Race</label>
+                  <input
+                    type="text"
+                    class="form-control dd-input"
+                    id="ech-race"
+                    maxlength="40"
+                  />
+                </div>
+                <div class="col-md-4">
+                  <label for="ech-class" class="form-label">Class</label>
+                  <input
+                    type="text"
+                    class="form-control dd-input"
+                    id="ech-class"
+                    maxlength="40"
+                  />
+                </div>
+                <div class="col-md-4">
+                  <label for="ech-level" class="form-label">Level</label>
+                  <input
+                    type="number"
+                    class="form-control dd-input"
+                    id="ech-level"
+                    min="1"
+                    max="20"
+                  />
+                </div>
+                <div class="col-12">
+                  <hr class="dd-divider" />
+                  <p class="text-muted small mb-0">Ability Scores</p>
+                </div>
+                <div class="col-md-2 col-4">
+                  <label for="ech-str" class="form-label">STR</label>
+                  <input
+                    type="number"
+                    class="form-control dd-input text-center"
+                    id="ech-str"
+                    min="1"
+                    max="30"
+                  />
+                </div>
+                <div class="col-md-2 col-4">
+                  <label for="ech-dex" class="form-label">DEX</label>
+                  <input
+                    type="number"
+                    class="form-control dd-input text-center"
+                    id="ech-dex"
+                    min="1"
+                    max="30"
+                  />
+                </div>
+                <div class="col-md-2 col-4">
+                  <label for="ech-con" class="form-label">CON</label>
+                  <input
+                    type="number"
+                    class="form-control dd-input text-center"
+                    id="ech-con"
+                    min="1"
+                    max="30"
+                  />
+                </div>
+                <div class="col-md-2 col-4">
+                  <label for="ech-int" class="form-label">INT</label>
+                  <input
+                    type="number"
+                    class="form-control dd-input text-center"
+                    id="ech-int"
+                    min="1"
+                    max="30"
+                  />
+                </div>
+                <div class="col-md-2 col-4">
+                  <label for="ech-wis" class="form-label">WIS</label>
+                  <input
+                    type="number"
+                    class="form-control dd-input text-center"
+                    id="ech-wis"
+                    min="1"
+                    max="30"
+                  />
+                </div>
+                <div class="col-md-2 col-4">
+                  <label for="ech-cha" class="form-label">CHA</label>
+                  <input
+                    type="number"
+                    class="form-control dd-input text-center"
+                    id="ech-cha"
+                    min="1"
+                    max="30"
+                  />
+                </div>
+                <div class="col-12">
+                  <hr class="dd-divider" />
+                  <p class="text-muted small mb-0">Combat Stats</p>
+                </div>
+                <div class="col-md-3">
+                  <label for="ech-ac" class="form-label">Armor Class</label>
+                  <input
+                    type="number"
+                    class="form-control dd-input text-center"
+                    id="ech-ac"
+                    min="1"
+                    max="30"
+                  />
+                </div>
+                <div class="col-md-3">
+                  <label for="ech-init" class="form-label"
+                    >Initiative Bonus</label
+                  >
+                  <input
+                    type="number"
+                    class="form-control dd-input text-center"
+                    id="ech-init"
+                    min="-5"
+                    max="10"
+                  />
+                </div>
+                <div class="col-md-3">
+                  <label for="ech-speed" class="form-label">Speed (ft)</label>
+                  <input
+                    type="number"
+                    class="form-control dd-input text-center"
+                    id="ech-speed"
+                    min="0"
+                    max="120"
+                  />
+                </div>
+                <div class="col-md-3">
+                  <label for="ech-hp" class="form-label">Max HP</label>
+                  <input
+                    type="number"
+                    class="form-control dd-input text-center"
+                    id="ech-hp"
+                    min="1"
+                    max="999"
+                  />
+                </div>
+              </div>
+              <div class="row g-3 mt-1">
+                <div class="col-12">
+                  <label for="ech-backstory" class="form-label"
+                    >Backstory</label
+                  >
+                  <textarea
+                    class="form-control dd-input"
+                    id="ech-backstory"
+                    rows="2"
+                    maxlength="400"
+                  ></textarea>
+                </div>
+              </div>
+            </form>
+          </div>
+          <div class="modal-footer border-0">
+            <button
+              type="button"
+              class="btn btn-secondary"
+              data-bs-dismiss="modal"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              class="btn dd-btn-primary"
+              id="btn-save-character"
+            >
+              <i class="bi bi-floppy me-1"></i>Save Changes
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Modal: Character Sheet ──────────────────────────── -->
+    <div
+      class="modal fade"
+      id="modal-char-sheet"
+      tabindex="-1"
+      aria-labelledby="modal-char-sheet-label"
+      aria-hidden="true"
+    >
+      <div class="modal-dialog modal-lg modal-dialog-scrollable">
+        <div class="modal-content dd-modal char-sheet-modal">
+          <div
+            class="modal-header border-0 char-sheet-header"
+            id="char-sheet-header"
+          >
+            <div class="d-flex align-items-center gap-3 w-100">
+              <div id="cs-avatar" class="class-avatar cs-avatar-lg"></div>
+              <div class="flex-grow-1">
+                <h5 class="modal-title mb-0" id="modal-char-sheet-label">
+                  <span id="cs-name" class="char-sheet-name"></span>
+                </h5>
+                <div class="char-sheet-subtitle" id="cs-subtitle"></div>
+              </div>
+              <div class="d-flex flex-column align-items-end gap-1 me-2">
+                <div class="cs-level-badge" id="cs-level-badge">Level 1</div>
+                <div
+                  id="cs-xp"
+                  class="dd-muted"
+                  style="font-size: 0.68rem"
+                ></div>
+                <div class="cs-xp-bar" id="cs-xp-bar-track">
+                  <div
+                    class="cs-xp-fill"
+                    id="cs-xp-fill"
+                    style="width: 0%"
+                  ></div>
+                </div>
+              </div>
+            </div>
+            <button
+              type="button"
+              class="btn-close btn-close-white ms-2"
+              data-bs-dismiss="modal"
+              aria-label="Close"
+            ></button>
+          </div>
+          <div class="modal-body px-4 pb-4">
+            <div class="cs-combat-row" id="cs-combat-row">
+              <div class="cs-combat-stat">
+                <div class="cs-combat-val" id="cs-hp"></div>
+                <div class="cs-combat-lbl">Hit Points</div>
+              </div>
+              <div class="cs-combat-stat">
+                <div class="cs-combat-val" id="cs-ac"></div>
+                <div class="cs-combat-lbl">Armor Class</div>
+              </div>
+              <div class="cs-combat-stat">
+                <div class="cs-combat-val" id="cs-init"></div>
+                <div class="cs-combat-lbl">Initiative</div>
+              </div>
+              <div class="cs-combat-stat">
+                <div class="cs-combat-val" id="cs-speed"></div>
+                <div class="cs-combat-lbl">Speed</div>
+              </div>
+              <div class="cs-combat-stat">
+                <div class="cs-combat-val" id="cs-pb"></div>
+                <div class="cs-combat-lbl">Prof. Bonus</div>
+              </div>
+            </div>
+
+            <div class="hp-bar-track mb-3" id="cs-hp-bar-track">
+              <div class="hp-bar-fill" id="cs-hp-bar"></div>
+            </div>
+
+            <div class="cs-section-label">
+              <i class="bi bi-bar-chart-fill me-1"></i>Ability Scores
+            </div>
+            <div class="cs-ability-grid" id="cs-ability-grid">
+              <!-- populated by JS -->
+            </div>
+
+            <div class="row g-3 mt-1">
+              <div class="col-md-6">
+                <div class="cs-section-label">
+                  <i class="bi bi-shield-check me-1"></i>Saving Throws
+                </div>
+                <div class="cs-list" id="cs-saves"></div>
+              </div>
+              <div class="col-md-6">
+                <div class="cs-section-label">
+                  <i class="bi bi-clipboard-check me-1"></i>Skills
+                </div>
+                <div class="cs-list" id="cs-skills"></div>
+              </div>
+            </div>
+
+            <div class="cs-conditions-row mt-3">
+              <div class="cs-section-label">
+                <i class="bi bi-exclamation-triangle me-1"></i>Active Conditions
+              </div>
+              <div id="cs-conditions" class="mt-1"></div>
+            </div>
+
+            <div class="cs-section-label mt-3">
+              <i class="bi bi-book me-1"></i>Backstory
+            </div>
+            <div class="cs-backstory" id="cs-backstory"></div>
+          </div>
+          <div class="modal-footer border-0">
+            <button
+              type="button"
+              class="btn btn-secondary"
+              data-bs-dismiss="modal"
+            >
+              Close
+            </button>
+            <button type="button" class="btn dd-btn-primary" id="btn-cs-edit">
+              <i class="bi bi-pencil-square me-1"></i>Edit Character
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="js/api.js"></script>
+    <script src="js/app.js?v=96"></script>
+  </body>
+</html>

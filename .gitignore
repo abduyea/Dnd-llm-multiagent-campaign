@@ -1,0 +1,64 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Virtual environment
+.venv/
+venv/
+env/
+ENV/
+
+# uv
+.python-version
+.uv-cache/
+
+# Environment variables
+.env
+*.env.local
+
+# Runtime data (generated; not source)
+data/dnd.db
+data/chroma/
+
+# Logs
+*.log
+*.err
+
+# Test / coverage
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+
+# Linting / type checking
+.ruff_cache/
+.mypy_cache/
+
+# AI agent tool artifacts
+.claude/
+.playwright-mcp/
+.qodo/
+.sixth/
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Development screenshots
+*.png
+!docs/**/*.png
