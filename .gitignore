@@ -26,7 +26,6 @@ ENV/
 
 # Runtime data (generated; not source)
 data/dnd.db
-data/chroma/
 
 # Logs
 *.log
