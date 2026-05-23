@@ -1,118 +1,121 @@
-# D&D Multi-AI Agent Storytelling System
+# D&D Storyteller
 
-A local AI-powered Dungeons & Dragons web app .
+A local web app for running D&D-style campaigns with AI narration.
 
-![Python](https://img.shields.io/badge/Python-3.12-blue?style=flat-square)
-![FastAPI](https://img.shields.io/badge/FastAPI-async-green?style=flat-square)
-![Ollama](https://img.shields.io/badge/AI-Ollama_Local-orange?style=flat-square)
-![Tests](https://img.shields.io/badge/Tests-387_passing-brightgreen?style=flat-square)
-![License](https://img.shields.io/badge/License-Academic%20%2F%20Educational-purple?style=flat-square)
+## Features
 
-## Requirements
+- Create campaigns and characters
+- Start and manage game sessions
+- Roll dice and resolve combat actions
+- Stream AI narration in the browser
+- Save campaign and session data locally
 
-- [Python 3.12+](https://www.python.org/downloads/)
-- [uv](https://docs.astral.sh/uv/) — `pip install uv`
-- [Ollama](https://ollama.com/)
+## Tech Stack
 
-## How to Run
+- Python 3.12
+- FastAPI
+- SQLite
+- SQLAlchemy
+- Alembic
+- Ollama
+- Vanilla JavaScript
+- Bootstrap
+- Docker
 
-> Open **three terminal windows** in the project folder.
+## Installation
 
-**1. Install dependencies**
+1. Install Python 3.12 or newer.
+
+2. Install `uv`.
+
+```bash
+pip install uv
+```
+
+3. Install project dependencies.
 
 ```bash
 uv sync --extra dev
 ```
 
-**2. Create config file**
+4. Create a local environment file.
 
 ```bash
-# macOS / Linux
-cp .env.example .env
-
-# Windows
 copy .env.example .env
 ```
 
-**3. Set up the database**
+On macOS or Linux:
+
+```bash
+cp .env.example .env
+```
+
+5. Set up the database.
 
 ```bash
 uv run alembic upgrade head
 ```
 
-**4. Download an AI model**
-
-```bash
-ollama pull llama3.2:3b
-```
-
-**5. Start Ollama** — Terminal 1
+6. Start Ollama in a separate terminal.
 
 ```bash
 ollama serve
 ```
 
-**6. Start the backend** — Terminal 2
+7. Download the local AI model.
+
+```bash
+ollama pull llama3.2:3b
+```
+
+8. Start the backend.
 
 ```bash
 uv run uvicorn backend.app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-**7. Start the frontend** — Terminal 3
+9. Start the frontend.
 
 ```bash
 python -m http.server 3000 --directory frontend
 ```
 
-**8. Open in browser**
+10. Open the app.
 
-```
+```text
 http://localhost:3000
 ```
 
-## Demo
+## How to Use
 
-1. Go to `http://localhost:3000`
-2. Click **"Quick Start — The Sunken Vault"**
+Open the app in your browser. Create a campaign, add characters, start a session, and enter player actions. The backend handles dice, game state, and narration.
 
-Loads a pre-built campaign with two characters ready to play.
+## Project Structure
 
-## Docker
-
-```bash
-docker compose up --build
+```text
+backend/      FastAPI backend
+frontend/     Browser frontend
+tests/        Test suite
+data/         Local database folder
+V2/           Previous version kept for reference
 ```
 
-Pull models on first run:
+## Environment Variables
 
-```bash
-docker compose --profile init run pull-models
+Create `.env` from `.env.example`.
+
+```env
+DATABASE_URL=sqlite+aiosqlite:///./data/dnd.db
+OLLAMA_BASE_URL=http://localhost:11434
+OLLAMA_TIMEOUT=8
 ```
 
-| Service | URL                   |
-| :------ | :-------------------- |
-| App     | http://localhost:8081 |
-| API     | http://localhost:8000 |
+## Notes
 
----
+- Ollama must be running before using AI narration.
+- The local database is stored in `data/dnd.db`.
+- Runtime files and caches are ignored by Git.
 
-## Tests
+## License
 
-```bash
-uv run pytest tests/ -v
-```
-
----
-
-## Troubleshooting
-
-| Problem              | Fix                                                                              |
-| :------------------- | :------------------------------------------------------------------------------- |
-| Backend won't start  | Run `uv run alembic upgrade head` first                                        |
-| Ollama unavailable   | Run `ollama serve` in a separate terminal                                      |
-| AI using static text | Run `ollama pull llama3.2:3b` then `ollama list`                             |
-| Port in use          | Change port in uvicorn command and update `API_BASE` in `frontend/js/api.js` |
-
----
-
-Academic / Educational Use — [@abduyea](https://github.com/abduyea)
+This project is licensed under the MIT License.
