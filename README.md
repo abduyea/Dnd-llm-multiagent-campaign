@@ -1,121 +1,399 @@
-# D&D Storyteller
+````markdown
+# D&D Multi-AI Agent Storytelling System
 
-A local web app for running D&D-style campaigns with AI narration.
+## CSB 440 Capstone Project — Spring 2026
 
-## Features
+### Team DS_ams
+- Spencer K
+- Abdulfetah Adem
+- Mizpah Parilla
 
-- Create campaigns and characters
-- Start and manage game sessions
-- Roll dice and resolve combat actions
-- Stream AI narration in the browser
-- Save campaign and session data locally
+---
 
-## Tech Stack
+# Project Overview
 
-- Python 3.12
+The D&D Multi-AI Agent Storytelling System is a browser-based tabletop RPG platform powered by multiple AI agents, persistent memory systems, and rule-based gameplay mechanics.
+
+The system combines:
+- AI-driven narration
+- Autonomous character interaction
+- Persistent campaign memory
+- Rule validation
+- Browser-based gameplay
+
+The platform delivers immersive Dungeons & Dragons storytelling experiences using local Large Language Models (LLMs) and a multi-agent architecture.
+
+---
+
+# Core Features
+
+## Campaign Management
+Create and manage Dungeons & Dragons campaigns through a browser interface.
+
+## Character System
+Supports character creation, progression, inventory management, and gameplay interaction.
+
+## AI Dungeon Master
+An AI Dungeon Master dynamically narrates the world and responds to player actions.
+
+## NPC Interaction
+AI-powered NPC dialogue and contextual interactions.
+
+## Persistent Memory
+Stores session history, character states, and narrative continuity across campaigns.
+
+## Rule Validation
+Deterministic gameplay mechanics ensure consistent rule-based interactions.
+
+## Multi-Agent Architecture
+Specialized AI agents handle narration, dialogue, gameplay logic, and memory processing.
+
+---
+
+# Technologies Used
+
+## Backend
+- Python
 - FastAPI
-- SQLite
-- SQLAlchemy
-- Alembic
-- Ollama
+- Uvicorn
+
+## Frontend
+- HTML
+- CSS
 - Vanilla JavaScript
 - Bootstrap
+
+## AI / LLM
+- Ollama
+- Llama Models
+- Qwen Models
+
+## Database
+- SQLite
+
+## Infrastructure
 - Docker
+- Docker Compose
 
-## Installation
+## Development Tools
+- GitHub
+- pytest
+- Alembic
 
-1. Install Python 3.12 or newer.
+---
 
-2. Install `uv`.
+# System Architecture
 
-```bash
-pip install uv
+The application uses a multi-layer architecture:
+
+## Frontend Layer
+Provides:
+- Campaign management
+- Character creation
+- Gameplay interaction
+- Real-time storytelling interface
+
+## Backend Layer
+Handles:
+- Gameplay logic
+- Rule validation
+- Session management
+- API communication
+- Memory processing
+
+## AI Agent Layer
+Includes:
+- Dungeon Master Agent
+- Character Agents
+- NPC Agents
+- Summarizer Agent
+
+## Persistent Memory Layer
+Stores:
+- Campaign history
+- Character states
+- Narrative events
+- Session progression
+
+---
+
+# How to Run the Application (Manual Setup)
+
+## STEP 1 — Open PowerShell and Go to Project Folder
+
+```powershell
+cd C:\Users\abduy\Dnd-llm-multiagent-campaign
+````
+
+Check current folder:
+
+```powershell
+pwd
 ```
 
-3. Install project dependencies.
+## STEP 2 — Create the `.env` File
 
-```bash
+Run:
+
+```powershell
+Copy-Item .env.example .env
+```
+
+Check the file:
+
+```powershell
+dir .env
+```
+
+Expected:
+
+* `.env` file appears
+
+## STEP 3 — Install Project Dependencies
+
+Run:
+
+```powershell
 uv sync --extra dev
 ```
 
-4. Create a local environment file.
+Expected:
 
-```bash
-copy .env.example .env
-```
+* Packages install successfully
 
-On macOS or Linux:
+## STEP 4 — Set Up the Database
 
-```bash
-cp .env.example .env
-```
+Run:
 
-5. Set up the database.
-
-```bash
+```powershell
 uv run alembic upgrade head
 ```
 
-6. Start Ollama in a separate terminal.
+Possible message:
 
-```bash
+```text
+table campaigns already exists
+```
+
+Meaning:
+
+* The database was already initialized previously.
+* This is okay.
+
+## STEP 5 — Start Ollama
+
+Open a new PowerShell terminal.
+
+Run:
+
+```powershell
 ollama serve
 ```
 
-7. Download the local AI model.
+Expected:
 
-```bash
+* Ollama server starts successfully
+
+Leave this terminal open.
+
+## STEP 6 — Download the AI Model
+
+Open another terminal.
+
+Run:
+
+```powershell
 ollama pull llama3.2:3b
 ```
 
-8. Start the backend.
+Expected:
 
-```bash
+* Model downloads successfully
+
+## STEP 7 — Start the Backend Server
+
+Go back to the project folder terminal.
+
+Run:
+
+```powershell
 uv run uvicorn backend.app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-9. Start the frontend.
+Expected:
 
-```bash
+```text
+Uvicorn running on http://0.0.0.0:8000
+```
+
+Meaning:
+
+* Backend API server is running successfully.
+
+Leave this terminal open.
+
+## STEP 8 — Start the Frontend Server
+
+Open another terminal.
+
+Go to the project folder:
+
+```powershell
+cd C:\Users\abduy\Dnd-llm-multiagent-campaign
+```
+
+Run:
+
+```powershell
 python -m http.server 3000 --directory frontend
 ```
 
-10. Open the app.
+Expected:
+
+```text
+Serving HTTP on ...
+```
+
+Meaning:
+
+* Frontend server is running successfully.
+
+Leave this terminal open.
+
+## STEP 9 — Open the Application
+
+Open browser and go to:
 
 ```text
 http://localhost:3000
 ```
 
-## How to Use
+Expected:
 
-Open the app in your browser. Create a campaign, add characters, start a session, and enter player actions. The backend handles dice, game state, and narration.
+* D&D Storyteller application opens
 
-## Project Structure
+Top-right status should display:
 
 ```text
-backend/      FastAPI backend
-frontend/     Browser frontend
-tests/        Test suite
-data/         Local database folder
-V2/           Previous version kept for reference
+BACKEND OK · AI READY
 ```
 
-## Environment Variables
+Meaning:
 
-Create `.env` from `.env.example`.
+* Frontend
+* Backend
+* Database
+* AI model
 
-```env
-DATABASE_URL=sqlite+aiosqlite:///./data/dnd.db
-OLLAMA_BASE_URL=http://localhost:11434
-OLLAMA_TIMEOUT=8
+are all working correctly.
+
+# Terminals Used
+
+## Terminal 1
+
+```powershell
+ollama serve
 ```
 
-## Notes
+## Terminal 2
 
-- Ollama must be running before using AI narration.
-- The local database is stored in `data/dnd.db`.
-- Runtime files and caches are ignored by Git.
+Backend server:
 
-## License
+```powershell
+uv run uvicorn backend.app.main:app --reload --host 0.0.0.0 --port 8000
+```
 
-This project is licensed under the MIT License.
+## Terminal 3
+
+Frontend server:
+
+```powershell
+python -m http.server 3000 --directory frontend
+```
+
+# How to Stop the Application
+
+Press:
+
+```text
+Ctrl + C
+```
+
+inside each running terminal.
+
+# Current Project Status
+
+The application currently supports:
+
+* Campaign management
+* Character interaction
+* AI narration
+* Persistent memory
+* Gameplay actions
+* Session tracking
+* Rule validation
+
+The system successfully integrates:
+
+* Frontend
+* Backend
+* AI agents
+* Database
+* Persistent storytelling workflows
+
+# Future Improvements
+
+## Multiplayer Support
+
+Add synchronized multiplayer gameplay.
+
+## Visual Gameplay Features
+
+Interactive maps and token systems.
+
+## Advanced Spell System
+
+Expanded combat and spell mechanics.
+
+## Authentication
+
+User accounts and secure login system.
+
+## Enhanced Memory Systems
+
+Improved long-term narrative tracking.
+
+## Cloud Deployment
+
+Cloud scalability and remote accessibility.
+
+# GitHub Repository
+
+```text
+https://github.com/abduyea/Dnd-llm-multiagent-campaign.git
+```
+
+# Confluence Documentation
+
+```text
+https://seattlecolleges-team-yellow-spring26.atlassian.net/wiki/x/H4CN
+```
+
+# Project Summary
+
+The D&D Multi-AI Agent Storytelling System demonstrates how AI-driven narration, persistent memory, and rule-based gameplay mechanics can be integrated into an immersive tabletop RPG experience.
+
+This capstone project combines:
+
+* Frontend interaction
+* Backend processing
+* Multi-agent AI systems
+* Persistent storytelling workflows
+
+into a functional browser-based storytelling platform.
+
+The project establishes a scalable foundation for adaptive storytelling, intelligent campaign management, and autonomous character interaction for modern Dungeons & Dragons gameplay experiences.
+
+```
+
+```
