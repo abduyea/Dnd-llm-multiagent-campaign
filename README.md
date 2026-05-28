@@ -1,20 +1,19 @@
-````markdown
 # D&D Multi-AI Agent Storytelling System
 
 ## CSB 440 Capstone Project — Spring 2026
 
 ### Team DS_ams
+
 - Spencer K
 - Abdulfetah Adem
 - Mizpah Parilla
-
----
 
 # Project Overview
 
 The D&D Multi-AI Agent Storytelling System is a browser-based tabletop RPG platform powered by multiple AI agents, persistent memory systems, and rule-based gameplay mechanics.
 
 The system combines:
+
 - AI-driven narration
 - Autonomous character interaction
 - Persistent campaign memory
@@ -23,78 +22,89 @@ The system combines:
 
 The platform delivers immersive Dungeons & Dragons storytelling experiences using local Large Language Models (LLMs) and a multi-agent architecture.
 
----
-
 # Core Features
 
 ## Campaign Management
+
 Create and manage Dungeons & Dragons campaigns through a browser interface.
 
 ## Character System
+
 Supports character creation, progression, inventory management, and gameplay interaction.
 
 ## AI Dungeon Master
+
 An AI Dungeon Master dynamically narrates the world and responds to player actions.
 
 ## NPC Interaction
+
 AI-powered NPC dialogue and contextual interactions.
 
 ## Persistent Memory
+
 Stores session history, character states, and narrative continuity across campaigns.
 
 ## Rule Validation
+
 Deterministic gameplay mechanics ensure consistent rule-based interactions.
 
 ## Multi-Agent Architecture
-Specialized AI agents handle narration, dialogue, gameplay logic, and memory processing.
 
----
+Specialized AI agents handle narration, dialogue, gameplay logic, and memory processing.
 
 # Technologies Used
 
 ## Backend
+
 - Python
 - FastAPI
 - Uvicorn
 
 ## Frontend
+
 - HTML
 - CSS
 - Vanilla JavaScript
 - Bootstrap
 
 ## AI / LLM
+
 - Ollama
 - Llama Models
 - Qwen Models
 
 ## Database
+
 - SQLite
 
 ## Infrastructure
+
 - Docker
 - Docker Compose
 
 ## Development Tools
+
 - GitHub
 - pytest
 - Alembic
-
----
 
 # System Architecture
 
 The application uses a multi-layer architecture:
 
 ## Frontend Layer
+
 Provides:
+
 - Campaign management
 - Character creation
 - Gameplay interaction
 - Real-time storytelling interface
 
 ## Backend Layer
+
 Handles:
+
 - Gameplay logic
 - Rule validation
 - Session management
@@ -102,20 +112,22 @@ Handles:
 - Memory processing
 
 ## AI Agent Layer
+
 Includes:
+
 - Dungeon Master Agent
 - Character Agents
 - NPC Agents
 - Summarizer Agent
 
 ## Persistent Memory Layer
+
 Stores:
+
 - Campaign history
 - Character states
 - Narrative events
 - Session progression
-
----
 
 # How to Run the Application (Manual Setup)
 
@@ -123,7 +135,7 @@ Stores:
 
 ```powershell
 cd C:\Users\abduy\Dnd-llm-multiagent-campaign
-````
+```
 
 Check current folder:
 
