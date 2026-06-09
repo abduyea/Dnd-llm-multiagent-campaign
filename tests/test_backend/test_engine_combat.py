@@ -1,6 +1,7 @@
 import pytest
 
 from backend.app.engine.combat import (
+    _enemy_from_context,
     apply_damage,
     compute_attack_roll,
     compute_initiative_order,
@@ -116,6 +117,37 @@ class TestAttackRoll:
         result = compute_attack_roll(attacker, target, action, seed=5)
         assert result.is_critical
         assert result.is_hit  # critical always hits
+
+    def test_hit_without_dice_expression_deals_damage(self) -> None:
+        # The UI sends basic attacks with no dice_expression; a landed hit must
+        # still deal damage (regression: previously resolved to 0).
+        attacker = _make_character("pc1", "Fighter", str_score=16)
+        target = _make_character("npc1", "Goblin", ac=5)
+        action = ActionInput(
+            session_id="s1", character_id="pc1",
+            action_type="attack_melee", target_id="npc1",
+        )
+        for seed in range(100):
+            result = compute_attack_roll(attacker, target, action, seed=seed)
+            if result.is_hit and not result.is_critical:
+                assert result.damage > 0
+                return
+        pytest.fail("no hitting seed found in range")
+
+    def test_critical_without_dice_expression_deals_damage(self) -> None:
+        # Regression: a critical hit with no weapon die used to deal 0 damage.
+        attacker = _make_character("pc1", "Fighter", str_score=16)
+        target = _make_character("npc1", "Tank", ac=99)  # only a natural 20 connects
+        action = ActionInput(
+            session_id="s1", character_id="pc1",
+            action_type="attack_melee", target_id="npc1",
+        )
+        for seed in range(300):
+            result = compute_attack_roll(attacker, target, action, seed=seed)
+            if result.is_critical:
+                assert result.damage > 0
+                return
+        pytest.fail("no critical-hit seed found in range")
 
     def test_natural_one_misses(self) -> None:
         attacker = _make_character("pc1", "Unlucky", str_score=20)
@@ -353,4 +385,83 @@ class TestResolveCheck:
         assert r1.d20 == r2.d20
         assert r1.total == r2.total
         assert r1.success == r2.success
+
+
+class TestEnemyFromContext:
+    """Targeting logic that maps the frontend encounter tracker to a combat enemy."""
+
+    def _action(self, **kw: object) -> ActionInput:
+        base: dict[str, object] = {
+            "session_id": "s1",
+            "character_id": "pc1",
+            "action_type": "attack_melee",
+        }
+        base.update(kw)
+        return ActionInput(**base)  # type: ignore[arg-type]
+
+    def test_no_enemies_returns_none(self) -> None:
+        assert _enemy_from_context(self._action()) is None
+
+    def test_all_dead_enemies_returns_none(self) -> None:
+        action = self._action(enemies=({"name": "Goblin", "hp": 0},))
+        assert _enemy_from_context(action) is None
+
+    def test_target_name_from_description_prefix(self) -> None:
+        action = self._action(
+            description="[Target: Orc] I swing my axe.",
+            enemies=({"name": "Goblin", "hp": 5}, {"name": "Orc", "hp": 12, "ac": 14}),
+        )
+        enemy = _enemy_from_context(action)
+        assert enemy is not None
+        assert enemy.name == "Orc"
+        assert enemy.armor_class == 14
+
+    def test_substring_name_match(self) -> None:
+        # "Warden" should match the tracked "The Bound Warden".
+        action = self._action(
+            description="[Target: Warden] strike",
+            enemies=({"name": "The Bound Warden", "hp": 52},),
+        )
+        enemy = _enemy_from_context(action)
+        assert enemy is not None
+        assert enemy.name == "The Bound Warden"
+
+    def test_falls_back_to_first_alive_when_no_match(self) -> None:
+        action = self._action(
+            description="[Target: Nobody] flail wildly",
+            enemies=({"name": "Goblin", "hp": 0}, {"name": "Orc", "hp": 9}),
+        )
+        enemy = _enemy_from_context(action)
+        assert enemy is not None
+        assert enemy.name == "Orc"  # first *alive* enemy, the dead Goblin is skipped
+
+    def test_target_id_used_when_no_description_prefix(self) -> None:
+        action = self._action(
+            target_id="Orc",
+            enemies=({"name": "Goblin", "hp": 5}, {"name": "Orc", "hp": 12}),
+        )
+        enemy = _enemy_from_context(action)
+        assert enemy is not None
+        assert enemy.name == "Orc"
+
+    def test_string_hp_and_ac_are_coerced(self) -> None:
+        # The frontend sometimes sends HP/AC as strings; they must parse, not crash.
+        action = self._action(enemies=({"name": "Goblin", "hp": "8", "ac": "13"},))
+        enemy = _enemy_from_context(action)
+        assert enemy is not None
+        assert enemy.hp_current == 8
+        assert enemy.armor_class == 13
+
+    def test_missing_hp_ac_use_generic_defaults(self) -> None:
+        action = self._action(enemies=({"name": "Mystery"},))
+        enemy = _enemy_from_context(action)
+        assert enemy is not None
+        assert enemy.hp_current == 10  # _GENERIC_ENEMY_HP
+        assert enemy.armor_class == 12  # _GENERIC_ENEMY_AC
+
+    def test_camelcase_maxhp_alias_is_read(self) -> None:
+        action = self._action(enemies=({"name": "Goblin", "hp": 5, "maxHp": 9},))
+        enemy = _enemy_from_context(action)
+        assert enemy is not None
+        assert enemy.hp_max == 9
 

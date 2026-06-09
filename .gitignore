@@ -26,6 +26,9 @@ ENV/
 
 # Runtime data (generated; not source)
 data/dnd.db
+data/dnd.db-wal
+data/dnd.db-shm
+data/dnd.db-journal
 
 # Logs
 *.log
@@ -46,6 +49,15 @@ htmlcov/
 .playwright-mcp/
 .qodo/
 .sixth/
+.codex/
+
+# V2 engine run artifacts
+runs/
+V2/runs/
+
+# DB backups
+data/*.db.bak
+data/*.bak
 
 # OS
 .DS_Store

@@ -1,7 +1,7 @@
 import uuid
 from datetime import UTC, datetime
 
-from sqlalchemy import Column, ForeignKey, Integer, String, Text
+from sqlalchemy import Column, ForeignKey, Index, Integer, String, Text
 from sqlalchemy.orm import relationship
 
 from backend.app.db.base import Base
@@ -12,8 +12,17 @@ class Memory(Base):
 
     __tablename__ = "memories"
 
+    # The memory layer fetches per-session facts ordered by importance every turn,
+    # so index (session_id, importance) to serve both the filter and the sort.
+    __table_args__ = (Index("ix_memories_session_importance", "session_id", "importance"),)
+
     id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
-    session_id = Column(String(36), ForeignKey("sessions.id", ondelete="CASCADE"), nullable=False)
+    session_id = Column(
+        String(36),
+        ForeignKey("sessions.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
     campaign_id = Column(String(36), ForeignKey("campaigns.id", ondelete="CASCADE"), nullable=False)
     fact_text = Column(Text, nullable=False)
     fact_type = Column(String(50), default="event")
@@ -30,7 +39,12 @@ class Summary(Base):
     __tablename__ = "summaries"
 
     id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
-    session_id = Column(String(36), ForeignKey("sessions.id", ondelete="CASCADE"), nullable=False)
+    session_id = Column(
+        String(36),
+        ForeignKey("sessions.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
     scene_id = Column(String(36), ForeignKey("scenes.id", ondelete="SET NULL"), nullable=True)
     summary_text = Column(Text, nullable=False)
     token_count = Column(Integer, default=0)

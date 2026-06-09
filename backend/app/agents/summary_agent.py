@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json as _json
 import uuid as _uuid
 
@@ -71,7 +72,10 @@ async def summarise_session(
 
     prompt = f"Session transcript:\n{transcript}\n\nGenerate a bullet-point summary."
 
-    summary_text = generate(
+    # Offload the blocking LLM call to a worker thread so ending a session does
+    # not freeze the event loop while the chronicle is generated.
+    summary_text = await asyncio.to_thread(
+        generate,
         prompt=prompt,
         system_prompt=_SUMMARY_SYSTEM_PROMPT,
         action_text="the session",

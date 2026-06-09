@@ -15,7 +15,8 @@ async def roll(body: DiceRollRequest) -> DiceRollResponse:
         parsed = parse_dice(body.expression)
         result = roll_dice(body.expression, seed=body.seed)
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        # Preserve the original cause for server-side debugging while returning a clean 400.
+        raise HTTPException(status_code=400, detail=str(e)) from e
 
     return DiceRollResponse(
         expression=result.expression,

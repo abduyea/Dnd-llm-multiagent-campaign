@@ -528,6 +528,21 @@ class TestSessionEndpoints:
         response = client.post("/api/v1/sessions/ghost-session/end")
         assert response.status_code == 404
 
+    def test_list_memories_empty_for_new_session(self) -> None:
+        campaign = client.post("/api/v1/campaigns", json={"name": "Mem Camp"}).json()
+        session = client.post(
+            "/api/v1/sessions",
+            json={"campaign_id": campaign["id"], "name": "Mem S"},
+        ).json()
+
+        response = client.get(f"/api/v1/sessions/{session['id']}/memories")
+        assert response.status_code == 200
+        assert response.json() == []  # no AI-extracted facts yet
+
+    def test_list_memories_nonexistent_session_returns_404(self) -> None:
+        response = client.get("/api/v1/sessions/ghost-session/memories")
+        assert response.status_code == 404
+
     def test_create_session_started_at_is_set(self) -> None:
         campaign = client.post("/api/v1/campaigns", json={"name": "C"}).json()
         response = client.post(

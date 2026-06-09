@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app.db.models import Character, Memory, Summary, Turn
@@ -336,10 +336,9 @@ async def _build_history_layer(
     Keeps context window coherent without losing narrative continuity.
     """
     count_result = await db.execute(
-        select(Turn).where(Turn.session_id == session_id)
+        select(func.count()).select_from(Turn).where(Turn.session_id == session_id)
     )
-    all_turns = count_result.scalars().all()
-    total_turns = len(all_turns)
+    total_turns = count_result.scalar_one()
 
     messages: list[dict[str, str]] = []
 

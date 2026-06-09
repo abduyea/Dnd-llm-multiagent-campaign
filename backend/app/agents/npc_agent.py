@@ -54,7 +54,7 @@ _STOP_WORDS: frozenset[str] = frozenset(
         "Something", "Someone", "Somewhere", "Nothing", "Nobody", "Nowhere",
         "Always", "Never", "Often", "Once", "Twice", "First", "Last",
         # Sentence-starters present in static narration templates
-        "Whatever", "Every", "Only",
+        "Whatever", "Only",
     }
 )
 
@@ -70,24 +70,36 @@ _DND_KEYWORDS: frozenset[str] = frozenset(
         "Deception", "Arcana", "Nature", "Religion", "History",
         "Investigation", "Survival", "Medicine", "Acrobatics", "Intimidation",
         "Performance", "Sleight", "Hand", "Tools", "Proficiency", "Bonus",
-        "Action", "Reaction", "Bonus", "Movement", "Spell", "Slot", "Rest",
+        "Action", "Reaction", "Movement", "Spell", "Slot", "Rest",
         "Short", "Long", "Hit", "Points", "Armor", "Class", "Strength",
         "Dexterity", "Constitution", "Intelligence", "Wisdom", "Charisma",
     }
 )
 
 
+_PUNCTUATION = ".,!?;:\"'’()[]{}-"  # noqa: RUF001 (curly apostrophe is intentional)
+_APOSTROPHES = ("'", "’")  # noqa: RUF001 — straight and curly apostrophes
+
+
 def _extract_npc_names(narration_only: str) -> list[str]:
     """Extract candidate NPC names from DM narration text only.
 
     Filters stop-words and D&D mechanical keywords so spell/ability names
-    are never mistaken for NPC names.
+    are never mistaken for NPC names. Possessives ("Aldous's") and
+    contractions ("I'm", "you're") are reduced to the root word before the
+    apostrophe so the speaker name is clean — "Aldous" not "Aldous's", and
+    "I'm" collapses to "I" which the stop-word/length filters then drop.
     """
     words = narration_only.split()
     names: list[str] = []
     seen: set[str] = set()
     for word in words:
-        clean = word.strip(".,!?;:\"'()[]{}-")
+        clean = word.strip(_PUNCTUATION)
+        # Drop possessive/contraction suffix: keep the root before any apostrophe.
+        for apo in _APOSTROPHES:
+            if apo in clean:
+                clean = clean.split(apo, 1)[0]
+        clean = clean.strip(_PUNCTUATION)
         if (
             clean
             and len(clean) > 2
@@ -172,6 +184,37 @@ _COMBAT_TYPES = frozenset({"attack_melee", "attack_ranged", "cast_spell", "cast"
 _TALK_TYPES = frozenset({"talk", "speak", "roleplay"})
 
 
+def _canonicalize_npc_names(
+    names: list[str], enemies: tuple[dict[str, Any], ...]
+) -> list[str]:
+    """Collapse fragments of multi-word NPC names to their canonical enemy name.
+
+    The narration scraper yields one capitalized word at a time, so "The Bound
+    Warden" arrives as the separate fragments "Bound" and "Warden". Map any
+    fragment that is a word of a known enemy name back to that full name, then
+    de-duplicate so each NPC speaks once. Names with no enemy match are kept as-is.
+    """
+    enemy_names = [
+        str(e.get("name", "")).strip()
+        for e in enemies
+        if isinstance(e, dict) and str(e.get("name", "")).strip()
+    ]
+    enemy_words = [(en, set(en.lower().split())) for en in enemy_names]
+    result: list[str] = []
+    seen: set[str] = set()
+    for name in names:
+        nlow = name.lower()
+        canonical = name
+        for ename, words in enemy_words:
+            if nlow == ename.lower() or nlow in words:
+                canonical = ename
+                break
+        if canonical.lower() not in seen:
+            seen.add(canonical.lower())
+            result.append(canonical)
+    return result
+
+
 def get_npc_responses(
     campaign_id: str,
     dm_narration: str,
@@ -202,6 +245,20 @@ def get_npc_responses(
                 npc_names.append(name)
                 seen_lower.add(name.lower())
 
+    # Collapse "Bound"/"Warden" fragments into the canonical "The Bound Warden", dedup.
+    npc_names = _canonicalize_npc_names(npc_names, enemies)
+
+    # When an encounter is tracked, it is the source of truth for who is present:
+    # drop stray capitalized words scraped from narration ("Very", "Suddenly") that
+    # are not known NPCs, so only real tracked characters speak.
+    enemy_name_set = {
+        str(e.get("name", "")).strip().lower()
+        for e in enemies
+        if isinstance(e, dict) and str(e.get("name", "")).strip()
+    }
+    if enemy_name_set:
+        npc_names = [n for n in npc_names if n.lower() in enemy_name_set]
+
     if not npc_names:
         return []
 
@@ -221,6 +278,7 @@ def get_npc_responses(
         prompt=prompt,
         system_prompt=_NPC_SYSTEM_PROMPT,
         action_text=action_text,
+        format_json=True,
     )
 
     responses = _try_parse_json(result)
@@ -230,18 +288,41 @@ def get_npc_responses(
     return responses[:3]
 
 
+def _coerce_dialogue_list(data: object) -> list[dict[str, str]]:
+    """Normalise parsed JSON into a list of {npc_name, dialogue} dicts.
+
+    Handles the shapes small models emit in JSON mode: a bare array, a single
+    object, or an object wrapping the array under some key (e.g. {"npcs": [...]}).
+    """
+    if isinstance(data, dict):
+        if "dialogue" in data:  # a single NPC object
+            data = [data]
+        else:  # object wrapping a list — take the first list value
+            data = next((v for v in data.values() if isinstance(v, list)), [])
+    if not isinstance(data, list):
+        return []
+    return [
+        item for item in data
+        if isinstance(item, dict) and str(item.get("dialogue", "")).strip()
+    ]
+
+
 def _try_parse_json(text: str) -> list[dict[str, str]] | None:
-    json_match = _re.search(r"\[.*?\]", text, _re.DOTALL)
-    if json_match:
+    # JSON mode usually returns clean JSON, so try the whole string first.
+    candidates: list[str] = [text]
+    array_match = _re.search(r"\[.*\]", text, _re.DOTALL)
+    if array_match:
+        candidates.append(array_match.group())
+    object_match = _re.search(r"\{.*\}", text, _re.DOTALL)
+    if object_match:
+        candidates.append(object_match.group())
+    for candidate in candidates:
         try:
-            data = _json.loads(json_match.group())
-            if isinstance(data, list):
-                return [
-                    item for item in data
-                    if isinstance(item, dict) and item.get("dialogue", "").strip()
-                ]
+            cleaned = _coerce_dialogue_list(_json.loads(candidate))
         except (_json.JSONDecodeError, TypeError):
-            pass
+            continue
+        if cleaned:
+            return cleaned
     return None
 
 

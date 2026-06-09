@@ -1,7 +1,7 @@
 [project]
-name = "dnd-storyteller"
+name = "dnd-multi-ai-agent-storytelling-system"
 version = "0.1.0"
-description = "Multi-AI Agent D&D Storytelling Platform"
+description = "D&D Multi-AI Agent Storytelling System — a multi-agent LLM platform that runs Dungeons & Dragons sessions."
 requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.115.0",

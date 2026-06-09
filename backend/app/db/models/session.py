@@ -11,7 +11,12 @@ class Session(Base):
     __tablename__ = "sessions"
 
     id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
-    campaign_id = Column(String(36), ForeignKey("campaigns.id", ondelete="CASCADE"), nullable=False)
+    campaign_id = Column(
+        String(36),
+        ForeignKey("campaigns.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
     name = Column(String(200), default="")
     status = Column(String(20), default="active")
     started_at = Column(String(32), default=lambda: datetime.now(UTC).isoformat())
@@ -29,7 +34,12 @@ class Turn(Base):
     __tablename__ = "turns"
 
     id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
-    session_id = Column(String(36), ForeignKey("sessions.id", ondelete="CASCADE"), nullable=False)
+    session_id = Column(
+        String(36),
+        ForeignKey("sessions.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
     character_id = Column(
         String(36), ForeignKey("characters.id", ondelete="SET NULL"), nullable=True
     )
@@ -48,7 +58,12 @@ class Scene(Base):
     __tablename__ = "scenes"
 
     id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
-    session_id = Column(String(36), ForeignKey("sessions.id", ondelete="CASCADE"), nullable=False)
+    session_id = Column(
+        String(36),
+        ForeignKey("sessions.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
     scene_number = Column(Integer, nullable=False)
     title = Column(String(200), default="")
     description = Column(Text, default="")

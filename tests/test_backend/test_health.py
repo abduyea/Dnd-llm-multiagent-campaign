@@ -9,8 +9,9 @@ def test_health_endpoint():
     assert response.status_code == 200
     data = response.json()
     assert data["status"] == "ok"
-    assert data["service"] == "dnd-storyteller"
+    assert data["service"] == "dnd-multi-ai-agent-storytelling-system"
     assert data["version"] == "0.1.0"
+    assert data["database"] == "ok"
     assert data["ollama"] in ("ok", "unavailable")
 
 

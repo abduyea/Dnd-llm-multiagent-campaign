@@ -13,14 +13,9 @@ from backend.app.orchestrator import process_action_stream as orchestrator_strea
 router = APIRouter(prefix="/sessions", tags=["actions"])
 
 
-@router.post("/{session_id}/actions", response_model=ActionResultResponse)
-async def submit_action(
-    session_id: str,
-    body: ActionRequest,
-    db: AsyncSession = Depends(get_db),
-) -> ActionResultResponse:
-    """Submit a player action, run the engine + AI pipeline, and return the result."""
-    action_input = ActionInput(
+def _build_action_input(session_id: str, body: ActionRequest) -> ActionInput:
+    """Map an incoming ActionRequest (plus the path session id) to an engine ActionInput."""
+    return ActionInput(
         session_id=session_id,
         character_id=body.character_id,
         action_type=body.action_type,
@@ -31,6 +26,16 @@ async def submit_action(
         enemies=tuple(e.model_dump() for e in body.enemies),
         location=body.location,
     )
+
+
+@router.post("/{session_id}/actions", response_model=ActionResultResponse)
+async def submit_action(
+    session_id: str,
+    body: ActionRequest,
+    db: AsyncSession = Depends(get_db),
+) -> ActionResultResponse:
+    """Submit a player action, run the engine + AI pipeline, and return the result."""
+    action_input = _build_action_input(session_id, body)
 
     result = await orchestrator_process_action(action_input=action_input, db=db)
 
@@ -83,17 +88,7 @@ async def submit_action_stream(
     Events: ``result`` (immediate game state) → ``token`` (narration tokens) → ``done``.
     Error events use ``type: error`` with a ``message`` field.
     """
-    action_input = ActionInput(
-        session_id=session_id,
-        character_id=body.character_id,
-        action_type=body.action_type,
-        target_id=body.target_id,
-        dice_expression=body.dice_expression,
-        description=body.description,
-        seed=body.seed,
-        enemies=tuple(e.model_dump() for e in body.enemies),
-        location=body.location,
-    )
+    action_input = _build_action_input(session_id, body)
     return StreamingResponse(
         orchestrator_stream(action_input, db),
         media_type="text/event-stream",

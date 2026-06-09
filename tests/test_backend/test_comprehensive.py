@@ -516,6 +516,7 @@ class TestContextBuilderMemoryLayer:
         empty_result = MagicMock()
         empty_result.scalar_one_or_none.return_value = None
         empty_result.scalars.return_value.all.return_value = []
+        empty_result.scalar_one.return_value = 0  # history-layer turn count
 
         mem_result = MagicMock()
         mem_result.scalars.return_value.all.return_value = [fact]
@@ -558,6 +559,7 @@ class TestContextBuilderHistoryLayer:
 
         mock_result = MagicMock()
         mock_result.scalars.return_value.all.return_value = [turn]
+        mock_result.scalar_one.return_value = 1  # short session, no compression
         mock_db = AsyncMock(spec=AsyncSession)
         mock_db.execute = AsyncMock(return_value=mock_result)
 
@@ -576,6 +578,7 @@ class TestContextBuilderHistoryLayer:
 
         mock_result = MagicMock()
         mock_result.scalars.return_value.all.return_value = [turn]
+        mock_result.scalar_one.return_value = 1  # short session, no compression
         mock_db = AsyncMock(spec=AsyncSession)
         mock_db.execute = AsyncMock(return_value=mock_result)
 
@@ -670,6 +673,43 @@ class TestNpcAgentNameExtraction:
         text = "Gandalf spoke. Gandalf replied. Gandalf laughed."
         names = _extract_npc_names(text)
         assert names.count("Gandalf") == 1
+
+    def test_possessive_stripped_to_root(self) -> None:
+        from backend.app.agents.npc_agent import _extract_npc_names
+
+        # Straight and curly possessives both reduce to the clean root name.
+        assert "Aldous" in _extract_npc_names("Aldous's voice trembled.")
+        assert "Aldous's" not in _extract_npc_names("Aldous's voice trembled.")
+        assert "Sylvi" in _extract_npc_names("Sylvi’s blade flashed.")  # noqa: RUF001
+
+    def test_contractions_not_treated_as_names(self) -> None:
+        from backend.app.agents.npc_agent import _extract_npc_names
+
+        # "I'm" -> "I" (stop-word/length filtered); same for other contractions.
+        names = _extract_npc_names("I'm watching you. You're too late. We'll see.")
+        assert "I'm" not in names
+        assert "You're" not in names
+        assert "We'll" not in names
+
+    def test_canonicalize_collapses_multiword_name_fragments(self) -> None:
+        from backend.app.agents.npc_agent import _canonicalize_npc_names
+
+        enemies = ({"name": "The Bound Warden", "hp": 52},)
+        # Scraper fragments collapse to the single canonical enemy name.
+        result = _canonicalize_npc_names(["Bound", "Warden"], enemies)
+        assert result == ["The Bound Warden"]
+
+    def test_canonicalize_maps_fragment_to_full_enemy_name(self) -> None:
+        from backend.app.agents.npc_agent import _canonicalize_npc_names
+
+        enemies = ({"name": "Aldous Finch", "hp": 6},)
+        assert _canonicalize_npc_names(["Aldous"], enemies) == ["Aldous Finch"]
+
+    def test_canonicalize_keeps_unknown_names(self) -> None:
+        from backend.app.agents.npc_agent import _canonicalize_npc_names
+
+        # A name with no enemy match is preserved unchanged.
+        assert _canonicalize_npc_names(["Gandalf"], ()) == ["Gandalf"]
 
 
 # ──────────────── Ollama client — static fallback variety ───────────────────
@@ -784,3 +824,86 @@ class TestFullHappyPath:
             r = await client.post(f"/api/v1/sessions/{sid}/end")
             assert r.status_code == 200
             assert r.json()["status"] == "completed"
+
+
+class TestBuildEnemyLayer:
+    """The DM combat-context block — drives how encounters are narrated."""
+
+    @staticmethod
+    def _layer(enemies: tuple[dict[str, object], ...]) -> str:
+        from backend.app.agents.context_builder import _build_enemy_layer
+
+        return _build_enemy_layer(enemies)
+
+    def test_no_enemies_returns_empty(self) -> None:
+        assert self._layer(()) == ""
+
+    def test_all_dead_lists_the_fallen(self) -> None:
+        result = self._layer(({"name": "Goblin", "hp": 0}, {"name": "Orc", "hp": 0}))
+        assert "All enemies defeated" in result
+        assert "Goblin" in result and "Orc" in result
+
+    def test_all_dead_without_names_returns_empty(self) -> None:
+        assert self._layer(({"hp": 0},)) == ""
+
+    def test_active_enemy_builds_encounter_block(self) -> None:
+        result = self._layer(({"name": "Goblin", "hp": 7, "max_hp": 7, "ac": 13},))
+        assert "ENCOUNTER" in result
+        assert "Goblin" in result
+        assert "AC 13" in result
+        assert "HP 7/7" in result
+
+    @pytest.mark.parametrize(
+        ("hp", "max_hp", "expected"),
+        [
+            (7, 7, "uninjured"),
+            (5, 7, "wounded"),
+            (3, 7, "badly wounded"),
+            (1, 7, "near death"),
+        ],
+    )
+    def test_hp_percentage_maps_to_wound_descriptor(
+        self, hp: int, max_hp: int, expected: str
+    ) -> None:
+        result = self._layer(({"name": "Foe", "hp": hp, "max_hp": max_hp},))
+        assert expected in result
+
+    def test_conditions_are_rendered(self) -> None:
+        result = self._layer(
+            ({"name": "Foe", "hp": 5, "max_hp": 7, "conditions": ["poisoned", "prone"]},)
+        )
+        assert "poisoned" in result and "prone" in result
+
+    def test_persona_disposition_and_goals_are_included(self) -> None:
+        result = self._layer(
+            (
+                {
+                    "name": "Warden",
+                    "hp": 50,
+                    "max_hp": 52,
+                    "disposition": "lawful_hostile",
+                    "persona": "An ancient revenant.",
+                    "goals": ["Defend the vault", "Parley first"],
+                },
+            )
+        )
+        assert "lawful_hostile" in result
+        assert "An ancient revenant." in result
+        assert "Defend the vault" in result and "Parley first" in result
+
+    def test_hostile_disposition_flags_active_combat(self) -> None:
+        result = self._layer(
+            ({"name": "Brute", "hp": 10, "max_hp": 10, "disposition": "hostile"},)
+        )
+        assert "COMBAT IS ACTIVE" in result
+
+    def test_wounded_enemy_flags_active_combat(self) -> None:
+        # Even a neutral enemy below full HP means a fight is underway.
+        result = self._layer(({"name": "Brute", "hp": 6, "max_hp": 10},))
+        assert "COMBAT IS ACTIVE" in result
+
+    def test_caps_at_six_enemies(self) -> None:
+        horde = tuple({"name": f"Goblin{i}", "hp": 5, "max_hp": 5} for i in range(10))
+        result = self._layer(horde)
+        assert "Goblin5" in result  # 6th enemy (index 5) present
+        assert "Goblin6" not in result  # 7th and beyond are dropped

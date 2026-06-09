@@ -11,7 +11,12 @@ class Character(Base):
     __tablename__ = "characters"
 
     id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
-    campaign_id = Column(String(36), ForeignKey("campaigns.id", ondelete="CASCADE"), nullable=False)
+    campaign_id = Column(
+        String(36),
+        ForeignKey("campaigns.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
     player_name = Column(String(100), default="")
     character_name = Column(String(100), nullable=False)
     race = Column(String(50), default="")

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json as _json
 import re
 import uuid as _uuid
@@ -107,10 +108,14 @@ async def extract_and_store(
         f"Extract important story facts from this turn."
     )
 
-    result = generate(
+    # Offload the blocking LLM call to a worker thread so the event loop stays
+    # responsive while memory is extracted after the turn result is shown.
+    result = await asyncio.to_thread(
+        generate,
         prompt=prompt,
         system_prompt=_MEMORY_SYSTEM_PROMPT,
         action_text=action_text,
+        format_json=True,
     )
 
     facts = _try_parse_json(result)

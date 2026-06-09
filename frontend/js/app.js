@@ -1,5 +1,5 @@
 /**
- * app.js — SPA router, state, and view rendering for D&D Storyteller.
+ * app.js — SPA router, state, and view rendering for the D&D Multi-AI Agent Storytelling System.
  * Routes: #/ (campaigns)  |  #/campaign/:id  |  #/session/:id
  */
 
@@ -420,6 +420,74 @@ const ACTION_ICONS = {
   roleplay:      "bi-chat-quote",
 };
 
+// ── Demo dungeon cast (from V2 demo_dungeon.json) ────────
+// Pre-built NPCs for "The Sunken Vault" demo. Each carries the rich persona
+// fields (persona/disposition/goals/secret/negotiation_levers) the DM + NPC
+// agents already consume — so the storytelling shines without manual setup.
+const DEMO_CAMPAIGN_NAME = "The Sunken Vault";
+const SUNKEN_VAULT_NPCS = [
+  {
+    name: "Skeletal Sentry", hp: 13, ac: 13, attackBonus: 4,
+    disposition: "hostile",
+    persona: "A mindless guardian of bone. No speech, no fear, no mercy — only its standing order.",
+    goals: [
+      "Attack any living creature you can see in this room.",
+      "Do not pursue beyond the guardroom — your duty ends at its threshold.",
+      "Fight to destruction; you feel no fear and take no morale.",
+    ],
+  },
+  {
+    name: "Aldous Finch", hp: 6, ac: 10, attackBonus: 0,
+    disposition: "deceptive_friendly",
+    persona: "Desperate, smooth-talking, evasive when questioned about specifics.",
+    secret: "Not a wronged tax-collector. He is a thief who triggered the vault's seal and was caged by the Warden. He genuinely knows a safe path but will lead the party into the Echo Gallery's danger to cover his own escape if freed without conditions.",
+    negotiation_levers: "Responds to compassion, to being caught in a lie (an Insight check), or to a binding promise. Will reveal the true path if pressed on the inconsistencies in his story.",
+    goals: [
+      "Convince the adventurers to free you from this cell.",
+      "Pose as a wronged tax-collector who happens to know the safe path to the Vault — this is a lie.",
+      "If pressed on inconsistencies, deflect with new fabricated specifics; only admit the lie if caught dead to rights.",
+      "If freed without a binding condition, plan to lead the party into the Echo Gallery to cover your own escape.",
+    ],
+  },
+  {
+    name: "Hessa Sootleather", hp: 14, ac: 12, attackBonus: 2,
+    disposition: "neutral_transactional",
+    persona: "Dry, shrewd, unsentimental but fair. Has seen many parties come and not return.",
+    negotiation_levers: "Sells a Potion of Healing for 50 coin, 50ft rope for 5 coin, a cryptic map fragment for 30 coin. Turns hostile only if robbed or threatened.",
+    goals: [
+      "Remain in the merchant nook — do not pursue or wander.",
+      "Offer trades from your shop stock to any party that approaches.",
+      "Accept information about the Warden as partial payment.",
+      "Become hostile only if the party robs or directly threatens you.",
+    ],
+  },
+  {
+    name: "The Bound Warden", hp: 52, ac: 15, attackBonus: 6,
+    disposition: "lawful_hostile",
+    persona: "An ancient revenant chained to its throne. Speaks in cold, formal sentences. Resents being bound but considers its duty absolute.",
+    negotiation_levers: "Can be reasoned out of the fight entirely if offered a genuine alternative binding — a true name, an oath, or the freed Aldous as a substitute guardian. A purely combative party gets the full fight.",
+    goals: [
+      "Defend the inner vault entrance — this is your sacred binding duty.",
+      "Open every first encounter with a parley: offer to let one person pass if the other stays as a replacement guardian.",
+      "Fight only if attacked, if the bargain is refused after being heard, or if the Heartstone is taken.",
+      "In combat, focus the most heavily armored target first.",
+      "Remain in the hall — your chains forbid pursuit.",
+    ],
+  },
+  {
+    name: "The Gallery Lurker", hp: 22, ac: 12, attackBonus: 4,
+    disposition: "ambush",
+    persona: "A shadow-dwelling predator that mimics a human cry for help to lure prey deeper into the Echo Gallery.",
+    negotiation_levers: "Not intelligent enough to bargain, but can be scared off by a strong show of force or fire.",
+    goals: [
+      "Mimic a human cry for help to lure prey deeper into the gallery.",
+      "Stay hidden until a target is within striking distance or a light reveals you.",
+      "Ambush any living creature; surprise gives them no first action.",
+      "Flee deeper into the gallery if your HP drops below one-quarter.",
+    ],
+  },
+];
+
 // ── View Transitions ─────────────────────────────────────
 function animateViewIn(root) {
   root.classList.remove("dd-view-enter");
@@ -703,18 +771,19 @@ async function refreshSidebarHP(campaignId) {
 
 // ── Backend Status ───────────────────────────────────────
 async function pollBackendStatus() {
-  const dot   = document.getElementById("backend-status");
-  const label = document.getElementById("backend-label");
+  const dot = document.getElementById("backend-status");
+  if (!dot) return;
   try {
     const d = await healthCheck();
     if (d.status === "ok") {
-      const aiStatus = d.ollama === "ok" ? " · AI ready" : " · AI offline";
+      // Colour-only indicator: green when the AI is ready, amber when it's offline.
+      // The hover tooltip carries the detail so the navbar stays uncluttered.
       dot.className = `dd-status-dot ${d.ollama === "ok" ? "ok" : "warn"}`;
-      label.textContent = `backend ok${aiStatus}`;
+      dot.title = d.ollama === "ok" ? "Backend OK · AI ready" : "Backend OK · AI offline";
     } else throw new Error();
   } catch {
     dot.className = "dd-status-dot err";
-    label.textContent = "backend offline";
+    dot.title = "Backend offline";
   }
 }
 
@@ -1051,7 +1120,7 @@ async function renderCampaignList(root) {
     <div class="dd-hero-banner">
       ${HERO_SVG}
       <div class="dd-hero-overlay">
-        <div class="dd-hero-title">D&amp;D Storyteller</div>
+        <div class="dd-hero-title">D&amp;D Multi-AI Agent Storytelling System</div>
         <div class="dd-hero-subtitle">Where every roll shapes a legend</div>
       </div>
     </div>
@@ -1665,7 +1734,7 @@ async function renderSessionView(sessionId, root) {
 
   root.innerHTML = buildSessionHTML(session, characters, campaignName);
   animateViewIn(root);
-  wireSessionEvents(session, characters, root);
+  wireSessionEvents(session, characters, root, campaignName);
 
   requestAnimationFrame(() => {
     document.querySelectorAll(".php-bar-fill").forEach(fill => {
@@ -1901,6 +1970,10 @@ function buildSessionHTML(session, characters, campaignName = "") {
           <div class="d-flex align-items-center justify-content-between mb-2">
             <div class="dd-section-heading mb-0"><i class="bi bi-shield-exclamation me-1"></i>Encounter</div>
             <div class="d-flex gap-1">
+              ${campaignName === DEMO_CAMPAIGN_NAME ? `<button class="btn btn-xs" id="btn-load-demo-cast" title="Load the Sunken Vault cast — NPCs with personas, goals & secrets"
+                style="font-size:0.6rem;opacity:0.6;">
+                <i class="bi bi-people"></i>
+              </button>` : ""}
               <button class="btn btn-xs" id="btn-clear-defeated" title="Remove defeated enemies"
                 style="font-size:0.6rem;opacity:0.6;display:none;">
                 <i class="bi bi-trash3"></i>
@@ -2049,7 +2122,7 @@ function buildSessionHTML(session, characters, campaignName = "") {
           <div class="row g-2 align-items-end">
             <div class="col-sm-3">
               <label class="form-label dd-muted mb-1" style="font-size:0.72rem;text-transform:uppercase;letter-spacing:0.06em;">Character</label>
-              <select class="form-select form-select-sm dd-input" id="action-character">
+              <select class="form-select form-select-sm dd-input" id="action-character" aria-label="Acting character">
                 ${charOptions}
               </select>
             </div>
@@ -2143,7 +2216,7 @@ function buildSessionHTML(session, characters, campaignName = "") {
     </div>`;
 }
 
-function wireSessionEvents(session, characters, root) {
+function wireSessionEvents(session, characters, root, campaignName = "") {
   // ── Session notes (localStorage) ────────────────────
   const NOTES_KEY = `notes_${session.id}`;
   const notesEl = document.getElementById("session-notes");
@@ -2429,6 +2502,31 @@ function wireSessionEvents(session, characters, root) {
     return match || addEnemy(name, 30, 12, 3);
   }
 
+  // Seed the demo dungeon cast (skips any NPC already tracked). Returns count added.
+  function seedDemoCast() {
+    const existing = new Set(State.enemies.map(e => e.name.toLowerCase()));
+    let added = 0;
+    SUNKEN_VAULT_NPCS.forEach((npc, i) => {
+      if (existing.has(npc.name.toLowerCase())) return;
+      State.enemies.push({
+        id: `enemy-demo-${i}-${Date.now()}`,
+        name: npc.name,
+        hp: npc.hp,
+        maxHp: npc.hp,
+        ac: npc.ac,
+        attackBonus: npc.attackBonus ?? 3,
+        persona: npc.persona || null,
+        disposition: npc.disposition || null,
+        goals: npc.goals || null,
+        secret: npc.secret || null,
+        negotiation_levers: npc.negotiation_levers || null,
+      });
+      added++;
+    });
+    if (added) { saveEnemies(); renderEnemies(); }
+    return added;
+  }
+
   function damageEnemy(id, amount) {
     const e = State.enemies.find(e => e.id === id);
     if (!e) return;
@@ -2698,8 +2796,21 @@ function wireSessionEvents(session, characters, root) {
 
   loadEnemies();
   loadConditions();
+  // Demo convenience: auto-load the Sunken Vault cast on first open (never
+  // overwrites a tracker the user has already populated, and only for the demo).
+  if (campaignName === DEMO_CAMPAIGN_NAME && State.enemies.length === 0) {
+    seedDemoCast();
+  }
   renderEnemies();
   renderAllCondLists();
+
+  document.getElementById("btn-load-demo-cast")?.addEventListener("click", () => {
+    const added = seedDemoCast();
+    showToast(
+      added > 0 ? `Loaded ${added} Sunken Vault NPC${added !== 1 ? "s" : ""}.` : "Cast already loaded.",
+      added > 0 ? "success" : "info",
+    );
+  });
 
   // ── Initiative tracker ──────────────────────────────
   const INITIATIVE_STORE_KEY = `initiative_${session.id}`;
@@ -3335,7 +3446,9 @@ function wireSessionEvents(session, characters, root) {
         lines.push(``);
       });
 
-      lines.push(`_Exported ${new Date().toLocaleString()} from D&D Storyteller_`);
+      lines.push(
+        `_Exported ${new Date().toLocaleString()} from D&D Multi-AI Agent Storytelling System_`
+      );
 
       const blob = new Blob([lines.join("\n")], { type: "text/markdown" });
       const url  = URL.createObjectURL(blob);
@@ -3961,6 +4074,13 @@ function wireSessionEvents(session, characters, root) {
 
     } catch (e) {
       thinkingEl.remove();
+      // If the stream dropped mid-narration, finalize the partial text cleanly
+      // instead of leaving a forever-blinking cursor on an unfinished block.
+      if (streamDiv) {
+        streamDiv.classList.remove("narration-streaming");
+        if (streamCursor) streamCursor.remove();
+        if (fullNarration) streamDiv.innerHTML = formatNarration(fullNarration);
+      }
       showToast(e.message, "danger");
     } finally {
       btn.disabled = false;

@@ -110,6 +110,30 @@ class TestNpcAgent:
         assert len(captured_prompts) == 1
         assert "MELEE ATTACK" in captured_prompts[0]
 
+    def test_get_npc_responses_filters_stray_words_when_enemies_tracked(self) -> None:
+        """A tracked encounter is the source of truth: stray narration words are dropped
+        and multi-word NPC names are not fragmented."""
+        captured: list[str] = []
+
+        def cap(prompt: str, **kwargs: object) -> str:
+            captured.append(prompt)
+            return '[{"npc_name": "The Bound Warden", "dialogue": "State your purpose."}]'
+
+        with patch("backend.app.agents.npc_agent.generate", side_effect=cap):
+            get_npc_responses(
+                campaign_id="c1",
+                dm_narration="Very well, the Bound Warden regards you coldly.",
+                action_text="I greet the warden.",
+                action_type="talk",
+                enemies=({"name": "The Bound Warden", "hp": 52},),
+            )
+        present_line = next(
+            line for line in captured[0].splitlines() if line.startswith("NPCs present:")
+        )
+        assert "The Bound Warden" in present_line
+        assert "Very" not in present_line
+        assert "Bound," not in present_line  # not fragmented into "Bound" / "Warden"
+
     def test_get_npc_responses_default_action_type(self) -> None:
         """When action_type is omitted, GENERAL ACTION label is used."""
         captured_prompts: list[str] = []
@@ -665,7 +689,7 @@ class TestHistoryCompression:
         turn_mock.narration = "You swing and miss."
 
         count_result = MagicMock()
-        count_result.scalars.return_value.all.return_value = [turn_mock] * 5
+        count_result.scalar_one.return_value = 5
 
         turns_result = MagicMock()
         turns_result.scalars.return_value.all.return_value = [turn_mock] * 5
@@ -685,7 +709,7 @@ class TestHistoryCompression:
         turn_mock.narration = "You move north."
 
         count_result = MagicMock()
-        count_result.scalars.return_value.all.return_value = [turn_mock] * 25
+        count_result.scalar_one.return_value = 25
 
         summary_result = MagicMock()
         summary_result.scalar_one_or_none.return_value = None
@@ -707,7 +731,7 @@ class TestHistoryCompression:
         turn_mock.narration = "You find a key."
 
         count_result = MagicMock()
-        count_result.scalars.return_value.all.return_value = [turn_mock] * 25
+        count_result.scalar_one.return_value = 25
 
         summary_mock = MagicMock()
         summary_mock.summary_text = "The party cleared the dungeon entrance."

@@ -282,7 +282,7 @@ http://localhost:3000
 
 Expected:
 
-* D&D Storyteller application opens
+* D&D Multi-AI Agent Storytelling System application opens
 
 Top-right status should display:
 
@@ -405,7 +405,3 @@ This capstone project combines:
 into a functional browser-based storytelling platform.
 
 The project establishes a scalable foundation for adaptive storytelling, intelligent campaign management, and autonomous character interaction for modern Dungeons & Dragons gameplay experiences.
-
-```
-
-```

@@ -1,0 +1,1170 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>D&D Multi-AI Agent Storytelling System — Capstone Presentation</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:       #0a0d12;
+      --surface:  #13191f;
+      --surface2: #1c2430;
+      --border:   #2a3340;
+      --gold:     #c9a84c;
+      --gold2:    #e8c96e;
+      --blue:     #58a6ff;
+      --green:    #3fb950;
+      --red:      #f85149;
+      --purple:   #bc8cff;
+      --text:     #e6edf3;
+      --muted:    #8b949e;
+    }
+
+    @import url('https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700&family=EB+Garamond:ital,wght@0,400;1,400&family=Inter:wght@300;400;500;600&display=swap');
+
+    body {
+      font-family: 'Inter', system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      height: 100vh;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      user-select: none;
+    }
+
+    /* ── nav bar ── */
+    #nav {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 24px;
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+    #slide-title { font-size: 0.78rem; color: var(--muted); font-weight: 500; letter-spacing: 0.04em; }
+    #nav-controls { display: flex; align-items: center; gap: 12px; }
+    .nav-btn {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 6px 16px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 0.8rem;
+      transition: background 0.15s, border-color 0.15s;
+    }
+    .nav-btn:hover { background: var(--border); border-color: var(--gold); color: var(--gold); }
+    #counter { font-size: 0.78rem; color: var(--muted); min-width: 55px; text-align: center; }
+    .progress-bar { height: 2px; background: var(--border); flex-shrink: 0; }
+    .progress-fill { height: 100%; background: linear-gradient(90deg, var(--gold), var(--gold2)); transition: width 0.35s ease; }
+
+    /* ── deck ── */
+    #deck { flex: 1; position: relative; overflow: hidden; }
+
+    .slide {
+      position: absolute;
+      inset: 0;
+      display: none;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      padding: 48px 72px;
+      text-align: center;
+      opacity: 0;
+      transition: opacity 0.35s ease;
+    }
+    .slide.active { display: flex; opacity: 1; }
+
+    /* ── typography ── */
+    .slide-eyebrow {
+      font-size: 0.7rem;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      color: var(--gold);
+      margin-bottom: 14px;
+      font-weight: 600;
+    }
+    .slide-title {
+      font-family: 'Cinzel', Georgia, serif;
+      font-weight: 700;
+      line-height: 1.15;
+      margin-bottom: 20px;
+    }
+    .slide-sub {
+      font-size: 1.05rem;
+      color: var(--muted);
+      line-height: 1.6;
+      max-width: 780px;
+    }
+
+    /* ── hero (slide 1) ── */
+    .hero-title {
+      font-family: 'Cinzel', Georgia, serif;
+      font-size: clamp(2.2rem, 4.5vw, 3.4rem);
+      font-weight: 700;
+      line-height: 1.1;
+      background: linear-gradient(135deg, var(--gold2) 0%, var(--gold) 50%, #a07830 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      margin-bottom: 12px;
+    }
+    .hero-sub {
+      font-family: 'EB Garamond', Georgia, serif;
+      font-size: 1.35rem;
+      font-style: italic;
+      color: var(--muted);
+      margin-bottom: 32px;
+    }
+    .badge-row { display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; margin-bottom: 28px; }
+    .badge {
+      padding: 5px 14px;
+      border-radius: 99px;
+      font-size: 0.72rem;
+      font-weight: 600;
+      letter-spacing: 0.06em;
+      border: 1px solid;
+    }
+    .badge-gold   { border-color: var(--gold);   color: var(--gold);   background: rgba(201,168,76,.08); }
+    .badge-blue   { border-color: var(--blue);   color: var(--blue);   background: rgba(88,166,255,.08); }
+    .badge-green  { border-color: var(--green);  color: var(--green);  background: rgba(63,185,80,.08); }
+    .badge-purple { border-color: var(--purple); color: var(--purple); background: rgba(188,140,255,.08); }
+    .hero-meta { font-size: 0.78rem; color: var(--muted); }
+
+    /* ── two-col layout ── */
+    .two-col {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 24px;
+      width: 100%;
+      max-width: 1100px;
+      text-align: left;
+    }
+    .three-col {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 20px;
+      width: 100%;
+      max-width: 1100px;
+      text-align: left;
+    }
+
+    /* ── card ── */
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 22px 24px;
+    }
+    .card-title {
+      font-size: 0.72rem;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: var(--gold);
+      font-weight: 600;
+      margin-bottom: 12px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .card ul { list-style: none; }
+    .card ul li {
+      font-size: 0.88rem;
+      color: var(--text);
+      padding: 4px 0;
+      line-height: 1.5;
+      display: flex;
+      align-items: flex-start;
+      gap: 8px;
+    }
+    .card ul li::before { content: '▸'; color: var(--gold); font-size: 0.7rem; margin-top: 3px; flex-shrink: 0; }
+
+    /* ── pill list ── */
+    .pill-grid {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      justify-content: center;
+      max-width: 900px;
+    }
+    .pill {
+      padding: 8px 18px;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      background: var(--surface);
+      font-size: 0.82rem;
+      color: var(--text);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .pill-icon { font-size: 1.1rem; }
+
+    /* ── arch diagram ── */
+    .arch-box {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 12px 18px;
+      text-align: center;
+    }
+    .arch-label { font-size: 0.7rem; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); margin-bottom: 6px; }
+    .arch-name { font-size: 0.9rem; font-weight: 600; color: var(--text); }
+    .arch-detail { font-size: 0.72rem; color: var(--muted); margin-top: 4px; }
+    .arch-arrow { color: var(--border); font-size: 1.2rem; display: flex; align-items: center; justify-content: center; }
+
+    /* ── agent pipeline ── */
+    .pipeline {
+      display: flex;
+      align-items: center;
+      gap: 0;
+      width: 100%;
+      max-width: 1000px;
+      overflow-x: auto;
+    }
+    .pipe-step {
+      flex: 1;
+      min-width: 130px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 14px 12px;
+      text-align: center;
+      position: relative;
+    }
+    .pipe-step::after {
+      content: '→';
+      position: absolute;
+      right: -14px;
+      top: 50%;
+      transform: translateY(-50%);
+      color: var(--gold);
+      font-size: 1rem;
+      z-index: 1;
+    }
+    .pipe-step:last-child::after { display: none; }
+    .pipe-step .ps-icon { font-size: 1.4rem; margin-bottom: 6px; }
+    .pipe-step .ps-name { font-size: 0.75rem; font-weight: 600; color: var(--gold); letter-spacing: 0.05em; }
+    .pipe-step .ps-sub { font-size: 0.65rem; color: var(--muted); margin-top: 3px; line-height: 1.3; }
+
+    /* ── timeline ── */
+    .timeline { width: 100%; max-width: 900px; text-align: left; }
+    .tl-item { display: flex; gap: 20px; margin-bottom: 18px; align-items: flex-start; }
+    .tl-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--gold); margin-top: 5px; flex-shrink: 0; }
+    .tl-content {}
+    .tl-phase { font-size: 0.65rem; letter-spacing: 0.12em; text-transform: uppercase; color: var(--gold); font-weight: 600; }
+    .tl-desc { font-size: 0.88rem; color: var(--text); margin-top: 2px; line-height: 1.5; }
+
+    /* ── challenge cards ── */
+    .challenge-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-left: 3px solid var(--gold);
+      border-radius: 8px;
+      padding: 16px 20px;
+    }
+    .challenge-title { font-size: 0.78rem; font-weight: 600; color: var(--gold); margin-bottom: 6px; }
+    .challenge-body { font-size: 0.82rem; color: var(--muted); line-height: 1.5; }
+    .challenge-solve { font-size: 0.78rem; color: var(--green); margin-top: 6px; }
+
+    /* ── stat row ── */
+    .stat-row {
+      display: flex;
+      gap: 24px;
+      justify-content: center;
+      flex-wrap: wrap;
+      margin-bottom: 28px;
+    }
+    .stat-box {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 20px 28px;
+      text-align: center;
+      min-width: 130px;
+    }
+    .stat-num { font-family: 'Cinzel', serif; font-size: 2.2rem; font-weight: 700; color: var(--gold); line-height: 1; }
+    .stat-label { font-size: 0.7rem; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); margin-top: 6px; }
+
+    /* ── demo steps ── */
+    .demo-steps { width: 100%; max-width: 900px; text-align: left; }
+    .demo-step {
+      display: flex;
+      gap: 18px;
+      margin-bottom: 14px;
+      align-items: flex-start;
+    }
+    .step-num {
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+      border: 1.5px solid var(--gold);
+      color: var(--gold);
+      font-size: 0.78rem;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+    .step-text { font-size: 0.88rem; color: var(--text); line-height: 1.55; padding-top: 3px; }
+    .step-code {
+      font-family: 'Courier New', monospace;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 5px;
+      padding: 2px 8px;
+      font-size: 0.78rem;
+      color: var(--blue);
+      display: inline-block;
+    }
+
+    /* ── lesson items ── */
+    .lesson-item {
+      display: flex;
+      gap: 14px;
+      align-items: flex-start;
+      margin-bottom: 14px;
+    }
+    .lesson-icon { font-size: 1.3rem; flex-shrink: 0; margin-top: 1px; }
+    .lesson-text {}
+    .lesson-head { font-size: 0.85rem; font-weight: 600; color: var(--text); margin-bottom: 2px; }
+    .lesson-body { font-size: 0.8rem; color: var(--muted); line-height: 1.4; }
+
+    /* ── future grid ── */
+    .future-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+      width: 100%;
+      max-width: 900px;
+      text-align: left;
+    }
+    .future-item {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 14px 18px;
+      display: flex;
+      gap: 12px;
+      align-items: flex-start;
+    }
+    .future-icon { font-size: 1.2rem; flex-shrink: 0; }
+    .future-head { font-size: 0.82rem; font-weight: 600; color: var(--text); margin-bottom: 2px; }
+    .future-body { font-size: 0.76rem; color: var(--muted); line-height: 1.4; }
+
+    /* ── conclusion ── */
+    .conclusion-quote {
+      font-family: 'EB Garamond', Georgia, serif;
+      font-size: 1.45rem;
+      font-style: italic;
+      color: var(--muted);
+      max-width: 700px;
+      margin-bottom: 32px;
+      line-height: 1.6;
+    }
+    .github-box {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 12px 24px;
+      font-size: 0.82rem;
+      color: var(--blue);
+      font-family: 'Courier New', monospace;
+      margin-top: 16px;
+    }
+
+    /* ── speaker notes ── */
+    #notes-bar {
+      background: var(--surface);
+      border-top: 1px solid var(--border);
+      padding: 12px 24px;
+      font-size: 0.76rem;
+      color: var(--muted);
+      line-height: 1.5;
+      max-height: 90px;
+      overflow-y: auto;
+      flex-shrink: 0;
+      display: none;
+    }
+    #notes-bar.visible { display: block; }
+    #notes-bar strong { color: var(--gold); }
+
+    /* ── arch grid for slide 6 ── */
+    .arch-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 12px;
+      width: 100%;
+      max-width: 1100px;
+    }
+    .arch-layer {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 16px 14px;
+      text-align: center;
+    }
+    .arch-layer-title {
+      font-size: 0.65rem;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--gold);
+      font-weight: 600;
+      margin-bottom: 10px;
+    }
+    .arch-layer ul { list-style: none; }
+    .arch-layer ul li {
+      font-size: 0.75rem;
+      color: var(--muted);
+      padding: 3px 0;
+      border-bottom: 1px solid var(--border);
+    }
+    .arch-layer ul li:last-child { border-bottom: none; }
+    .arch-layer ul li strong { color: var(--text); }
+
+    /* ── fallback chain visual ── */
+    .fallback-chain {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+      justify-content: center;
+    }
+    .fc-node {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 10px 16px;
+      text-align: center;
+      min-width: 110px;
+    }
+    .fc-name { font-size: 0.8rem; font-weight: 600; color: var(--text); }
+    .fc-sub { font-size: 0.65rem; color: var(--muted); margin-top: 2px; }
+    .fc-arrow { color: var(--gold); font-size: 1rem; }
+
+    /* ── slide 11 feature pills ── */
+    .feature-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      justify-content: center;
+      max-width: 900px;
+      margin-bottom: 20px;
+    }
+    .feat-pill {
+      padding: 6px 14px;
+      border-radius: 6px;
+      font-size: 0.75rem;
+      font-weight: 500;
+      border: 1px solid;
+    }
+
+    /* keyboard hint */
+    #kbd-hint {
+      position: fixed;
+      bottom: 8px;
+      right: 16px;
+      font-size: 0.65rem;
+      color: var(--border);
+      pointer-events: none;
+    }
+  </style>
+</head>
+<body>
+
+<!-- ── Navigation ── -->
+<div id="nav">
+  <span id="slide-title">D&D Multi-AI Agent Storytelling System</span>
+  <div id="nav-controls">
+    <button class="nav-btn" onclick="prevSlide()">← Prev</button>
+    <span id="counter">1 / 14</span>
+    <button class="nav-btn" onclick="nextSlide()">Next →</button>
+    <button class="nav-btn" id="notes-toggle" onclick="toggleNotes()" style="border-color: var(--gold); color: var(--gold);">Notes</button>
+    <a href="PRESENTATION.md" class="nav-btn" style="text-decoration:none; border-color: var(--purple); color: var(--purple);" title="Open full Markdown version">MD</a>
+  </div>
+</div>
+<div class="progress-bar"><div class="progress-fill" id="progress"></div></div>
+
+<!-- ── Slides ── -->
+<div id="deck">
+
+  <!-- ══════════════════════════════════════════
+       SLIDE 1 — TITLE
+  ══════════════════════════════════════════ -->
+  <section class="slide active" data-notes="Welcome everyone. Today I'm presenting my capstone project — a locally-run AI system that acts as your Dungeon Master. No cloud required, no subscription. The game engine handles all rules; the AI narrates the story. Let me walk you through what I built and why.">
+    <div class="slide-eyebrow">CSB 440 — Capstone Project</div>
+    <h1 class="hero-title">D&D Multi-AI Agent<br>Storytelling System</h1>
+    <p class="hero-sub">A locally-run tabletop RPG platform where AI agents<br>act as Dungeon Master, NPCs, and story memory</p>
+    <div class="badge-row">
+      <span class="badge badge-gold">FastAPI</span>
+      <span class="badge badge-blue">Ollama LLM</span>
+      <span class="badge badge-green">SQLite + Alembic</span>
+      <span class="badge badge-purple">5 AI Agents</span>
+      <span class="badge badge-gold">383 Tests</span>
+      <span class="badge badge-blue">Docker</span>
+    </div>
+    <p class="hero-meta">Abduyea &nbsp;·&nbsp; May 2026 &nbsp;·&nbsp; github.com/abduyea/Dnd-llm-multiagent-campaign</p>
+  </section>
+
+  <!-- ══════════════════════════════════════════
+       SLIDE 2 — PROJECT OVERVIEW
+  ══════════════════════════════════════════ -->
+  <section class="slide" data-notes="The project is a full web application — not just a chatbot wrapper. It combines a rules engine that enforces D&D 5e mechanics with multiple specialized AI agents. Each agent has a single job. The frontend is a dark-themed web UI built entirely in vanilla JS. Everything runs locally on your machine — no API keys, no cloud costs.">
+    <div class="slide-eyebrow">Overview</div>
+    <h2 class="slide-title" style="font-size: clamp(1.6rem,3vw,2.2rem); margin-bottom: 28px;">What I Built</h2>
+    <div class="two-col">
+      <div class="card">
+        <div class="card-title">🎲 The Application</div>
+        <ul>
+          <li>Browser-based D&D campaign manager</li>
+          <li>Create campaigns, characters, and game sessions</li>
+          <li>Submit player actions — AI narrates the outcome</li>
+          <li>Real-time streaming narration via Server-Sent Events</li>
+          <li>NPC dialogue, memory persistence, session summaries</li>
+        </ul>
+      </div>
+      <div class="card">
+        <div class="card-title">🤖 The AI System</div>
+        <ul>
+          <li><strong>DM Agent</strong> — narrates turn outcomes (2-3 cinematic sentences)</li>
+          <li><strong>NPC Agent</strong> — generates in-character spoken dialogue</li>
+          <li><strong>Memory Agent</strong> — extracts story facts to a SQLite table</li>
+          <li><strong>Context Builder</strong> — assembles world/character/history context</li>
+          <li><strong>Summary Agent</strong> — writes session recaps when sessions end</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <!-- ══════════════════════════════════════════
+       SLIDE 3 — PROBLEM STATEMENT
+  ══════════════════════════════════════════ -->
+  <section class="slide" data-notes="Playing D&D traditionally requires 4–6 people to coordinate schedules, and an experienced Dungeon Master who can improvise a story on the fly. That's a real barrier. Existing AI chatbot solutions just wrap GPT — they have no game rules, no memory, no consistent world state. I wanted to build something that actually plays by the rules and remembers what happened.">
+    <div class="slide-eyebrow">The Problem</div>
+    <h2 class="slide-title" style="font-size: clamp(1.6rem,3vw,2.2rem); margin-bottom: 28px;">Why This Needed to Exist</h2>
+    <div class="three-col">
+      <div class="card">
+        <div class="card-title">👥 Scheduling Problem</div>
+        <ul>
+          <li>Traditional D&D needs 4–6 coordinated players</li>
+          <li>Requires an experienced Dungeon Master</li>
+          <li>Sessions take 3–5 hours to organize</li>
+        </ul>
+      </div>
+      <div class="card">
+        <div class="card-title">🤖 AI Gap</div>
+        <ul>
+          <li>Existing chatbot DMs have no rules engine</li>
+          <li>They invent dice results and ignore game mechanics</li>
+          <li>No persistent story memory across sessions</li>
+        </ul>
+      </div>
+      <div class="card">
+        <div class="card-title">☁️ Cloud Dependency</div>
+        <ul>
+          <li>Most AI tools require paid API subscriptions</li>
+          <li>User data sent to third-party servers</li>
+          <li>Latency and cost degrade real-time play</li>
+        </ul>
+      </div>
+    </div>
+    <p class="slide-sub" style="margin-top: 24px; font-size: 0.9rem;">
+      The core insight: <span style="color: var(--gold);">separate mechanics from narrative.</span>
+      Let the engine enforce the rules. Let the AI tell the story.
+    </p>
+  </section>
+
+  <!-- ══════════════════════════════════════════
+       SLIDE 4 — GOALS / OBJECTIVES
+  ══════════════════════════════════════════ -->
+  <section class="slide" data-notes="My initial goals were straightforward. But as I developed, the scope expanded. I started with just the CLI engine in V2, then realized it needed a real UI, persistent storage, and proper multi-agent coordination. The goal stayed the same — a fully self-contained D&D platform — but the architecture grew significantly.">
+    <div class="slide-eyebrow">Goals & Objectives</div>
+    <h2 class="slide-title" style="font-size: clamp(1.6rem,3vw,2.2rem); margin-bottom: 28px;">What I Set Out to Do</h2>
+    <div class="two-col">
+      <div class="card">
+        <div class="card-title">🎯 Original Objectives</div>
+        <ul>
+          <li>Build a locally-run D&D game engine with real rules</li>
+          <li>Integrate a local LLM as the Dungeon Master</li>
+          <li>Support multi-agent AI coordination (DM, NPCs, memory)</li>
+          <li>Ensure AI never invents dice results or rule outcomes</li>
+          <li>Run entirely offline — no cloud or paid API</li>
+        </ul>
+      </div>
+      <div class="card">
+        <div class="card-title">📈 What Evolved During Development</div>
+        <ul>
+          <li>Added a full web UI (moved beyond CLI-only)</li>
+          <li>Built persistent SQLite storage with Alembic migrations</li>
+          <li>Added SSE streaming for real-time narration</li>
+          <li>Implemented NPC persona and secret tracking</li>
+          <li>Added XP progression and level-up system</li>
+          <li>Dockerized the entire stack for easy deployment</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <!-- ══════════════════════════════════════════
+       SLIDE 5 — TECHNOLOGIES
+  ══════════════════════════════════════════ -->
+  <section class="slide" data-notes="The stack is all Python. FastAPI for the backend because of its async support and automatic API docs. Ollama for running local LLMs — it handles model downloads and inference locally. SQLite keeps things simple — no separate database server needed. The frontend is vanilla JS with Bootstrap, no framework overhead. uv for package management because it's dramatically faster than pip.">
+    <div class="slide-eyebrow">Tech Stack</div>
+    <h2 class="slide-title" style="font-size: clamp(1.5rem,2.8vw,2rem); margin-bottom: 28px;">Technologies Used</h2>
+    <div class="three-col" style="max-width: 1000px;">
+      <div class="card">
+        <div class="card-title">⚙️ Backend</div>
+        <ul>
+          <li>Python 3.12</li>
+          <li>FastAPI + Uvicorn (async)</li>
+          <li>SQLAlchemy 2.0 (async) + aiosqlite</li>
+          <li>Alembic (migrations)</li>
+          <li>httpx (Ollama client)</li>
+          <li>Pydantic v2 (validation)</li>
+        </ul>
+      </div>
+      <div class="card">
+        <div class="card-title">🤖 AI / Local LLM</div>
+        <ul>
+          <li>Ollama — local model server</li>
+          <li>qwen3 (primary model)</li>
+          <li>mistral-nemo (fallback 1)</li>
+          <li>llama3.2:3b (fallback 2)</li>
+          <li>Static narration (offline fallback)</li>
+        </ul>
+      </div>
+      <div class="card">
+        <div class="card-title">🖥️ Frontend & Infra</div>
+        <ul>
+          <li>Vanilla JS + Bootstrap 5</li>
+          <li>SSE (Server-Sent Events)</li>
+          <li>Docker + Docker Compose</li>
+          <li>nginx (frontend serving)</li>
+          <li>uv (package manager)</li>
+          <li>Ruff + mypy + pytest</li>
+        </ul>
+      </div>
+    </div>
+    <div class="fallback-chain" style="margin-top: 22px;">
+      <div class="fc-node"><div class="fc-name">qwen3</div><div class="fc-sub">Primary · fast</div></div>
+      <span class="fc-arrow">→ fails →</span>
+      <div class="fc-node"><div class="fc-name">mistral-nemo</div><div class="fc-sub">Fallback 1</div></div>
+      <span class="fc-arrow">→ fails →</span>
+      <div class="fc-node"><div class="fc-name">llama3.2:3b</div><div class="fc-sub">Fallback 2</div></div>
+      <span class="fc-arrow">→ fails →</span>
+      <div class="fc-node" style="border-color: var(--green);"><div class="fc-name" style="color: var(--green);">Static text</div><div class="fc-sub">Always works</div></div>
+    </div>
+  </section>
+
+  <!-- ══════════════════════════════════════════
+       SLIDE 6 — SYSTEM ARCHITECTURE
+  ══════════════════════════════════════════ -->
+  <section class="slide" data-notes="The architecture is layered. The browser talks to FastAPI. FastAPI routes hit the orchestrator, which coordinates the game engine and the AI agents. The game engine is purely deterministic — no AI involved in resolving dice or combat. The AI agents only receive the resolved outcome and narrate it. This means the game is always fair — AI can never cheat or invent a hit that didn't happen.">
+    <div class="slide-eyebrow">Architecture</div>
+    <h2 class="slide-title" style="font-size: clamp(1.4rem,2.5vw,1.9rem); margin-bottom: 24px;">How It All Fits Together</h2>
+    <div class="arch-grid">
+      <div class="arch-layer">
+        <div class="arch-layer-title">Frontend</div>
+        <ul>
+          <li><strong>Vanilla JS SPA</strong></li>
+          <li>Campaign manager</li>
+          <li>Character sheet</li>
+          <li>Enemy tracker</li>
+          <li>SSE narration stream</li>
+          <li>Bootstrap 5 dark UI</li>
+        </ul>
+      </div>
+      <div class="arch-layer">
+        <div class="arch-layer-title">API Layer (FastAPI)</div>
+        <ul>
+          <li><strong>REST + SSE endpoints</strong></li>
+          <li>/campaigns</li>
+          <li>/characters</li>
+          <li>/sessions</li>
+          <li>/actions (+ /stream)</li>
+          <li>/dice, /stats, /health</li>
+        </ul>
+      </div>
+      <div class="arch-layer">
+        <div class="arch-layer-title">Engine + Agents</div>
+        <ul>
+          <li><strong>Orchestrator</strong></li>
+          <li>Dice engine (formulas)</li>
+          <li>Combat resolver</li>
+          <li>Action validator</li>
+          <li>DM Agent → narrate</li>
+          <li>NPC, Memory, Summary</li>
+        </ul>
+      </div>
+      <div class="arch-layer">
+        <div class="arch-layer-title">Data Layer</div>
+        <ul>
+          <li><strong>SQLite + SQLAlchemy</strong></li>
+          <li>Campaigns / Characters</li>
+          <li>Sessions / Turns</li>
+          <li>Memory table</li>
+          <li>Summaries</li>
+          <li>Event log</li>
+        </ul>
+      </div>
+    </div>
+    <p class="slide-sub" style="margin-top: 22px; font-size: 0.82rem;">
+      Core principle: <span style="color: var(--gold);">Engine resolves — AI narrates.</span>
+      The LLM never touches game state directly.
+    </p>
+  </section>
+
+  <!-- ══════════════════════════════════════════
+       SLIDE 7 — FEATURES IMPLEMENTED
+  ══════════════════════════════════════════ -->
+  <section class="slide" data-notes="Let me walk through what's actually implemented. Character creation includes full D&D 5e stats — strength, dexterity, constitution, intelligence, wisdom, charisma. The 4d6 drop lowest button rolls stats automatically. The enemy tracker lets you add NPCs with hidden secrets that the DM knows but won't reveal unless pressed. The action pipeline supports 14 action types.">
+    <div class="slide-eyebrow">Features</div>
+    <h2 class="slide-title" style="font-size: clamp(1.4rem,2.5vw,1.9rem); margin-bottom: 22px;">What's Implemented</h2>
+    <div class="feature-row">
+      <span class="feat-pill" style="border-color: var(--gold); color: var(--gold); background: rgba(201,168,76,.08);">Campaign Creation</span>
+      <span class="feat-pill" style="border-color: var(--gold); color: var(--gold); background: rgba(201,168,76,.08);">Character Sheet (D&D 5e)</span>
+      <span class="feat-pill" style="border-color: var(--gold); color: var(--gold); background: rgba(201,168,76,.08);">4d6 Stat Rolling</span>
+      <span class="feat-pill" style="border-color: var(--blue); color: var(--blue); background: rgba(88,166,255,.08);">Session Management</span>
+      <span class="feat-pill" style="border-color: var(--blue); color: var(--blue); background: rgba(88,166,255,.08);">14 Action Types</span>
+      <span class="feat-pill" style="border-color: var(--blue); color: var(--blue); background: rgba(88,166,255,.08);">Streaming Narration (SSE)</span>
+      <span class="feat-pill" style="border-color: var(--purple); color: var(--purple); background: rgba(188,140,255,.08);">Combat Resolution (1d20+mod)</span>
+      <span class="feat-pill" style="border-color: var(--purple); color: var(--purple); background: rgba(188,140,255,.08);">Critical Hit / Fumble</span>
+      <span class="feat-pill" style="border-color: var(--purple); color: var(--purple); background: rgba(188,140,255,.08);">Initiative Order</span>
+      <span class="feat-pill" style="border-color: var(--green); color: var(--green); background: rgba(63,185,80,.08);">NPC Persona + Secrets</span>
+      <span class="feat-pill" style="border-color: var(--green); color: var(--green); background: rgba(63,185,80,.08);">NPC Dialogue (AI)</span>
+      <span class="feat-pill" style="border-color: var(--green); color: var(--green); background: rgba(63,185,80,.08);">Story Memory (AI extracted)</span>
+      <span class="feat-pill" style="border-color: var(--gold); color: var(--gold); background: rgba(201,168,76,.08);">XP + Level-Up</span>
+      <span class="feat-pill" style="border-color: var(--gold); color: var(--gold); background: rgba(201,168,76,.08);">Session Summary (AI)</span>
+      <span class="feat-pill" style="border-color: var(--blue); color: var(--blue); background: rgba(88,166,255,.08);">History Compression</span>
+      <span class="feat-pill" style="border-color: var(--blue); color: var(--blue); background: rgba(88,166,255,.08);">Docker Compose Deploy</span>
+    </div>
+    <div style="width:100%;max-width:900px;">
+      <div class="card-title" style="font-size:0.7rem; justify-content:center; margin-bottom: 10px;">Action Economy — 14 Supported Action Types</div>
+      <div style="display:flex; flex-wrap:wrap; gap:6px; justify-content:center;">
+        <code style="font-size:0.7rem; color: var(--muted); background: var(--surface2); padding: 3px 8px; border-radius: 4px;">attack_melee</code>
+        <code style="font-size:0.7rem; color: var(--muted); background: var(--surface2); padding: 3px 8px; border-radius: 4px;">attack_ranged</code>
+        <code style="font-size:0.7rem; color: var(--muted); background: var(--surface2); padding: 3px 8px; border-radius: 4px;">spell</code>
+        <code style="font-size:0.7rem; color: var(--muted); background: var(--surface2); padding: 3px 8px; border-radius: 4px;">skill_check</code>
+        <code style="font-size:0.7rem; color: var(--muted); background: var(--surface2); padding: 3px 8px; border-radius: 4px;">move</code>
+        <code style="font-size:0.7rem; color: var(--muted); background: var(--surface2); padding: 3px 8px; border-radius: 4px;">dodge</code>
+        <code style="font-size:0.7rem; color: var(--muted); background: var(--surface2); padding: 3px 8px; border-radius: 4px;">hide</code>
+        <code style="font-size:0.7rem; color: var(--muted); background: var(--surface2); padding: 3px 8px; border-radius: 4px;">talk</code>
+        <code style="font-size:0.7rem; color: var(--muted); background: var(--surface2); padding: 3px 8px; border-radius: 4px;">use_item</code>
+        <code style="font-size:0.7rem; color: var(--muted); background: var(--surface2); padding: 3px 8px; border-radius: 4px;">puzzle_answer</code>
+        <code style="font-size:0.7rem; color: var(--muted); background: var(--surface2); padding: 3px 8px; border-radius: 4px;">rest</code>
+        <code style="font-size:0.7rem; color: var(--muted); background: var(--surface2); padding: 3px 8px; border-radius: 4px;">roleplay</code>
+        <code style="font-size:0.7rem; color: var(--muted); background: var(--surface2); padding: 3px 8px; border-radius: 4px;">help</code>
+        <code style="font-size:0.7rem; color: var(--muted); background: var(--surface2); padding: 3px 8px; border-radius: 4px;">ready</code>
+      </div>
+    </div>
+  </section>
+
+  <!-- ══════════════════════════════════════════
+       SLIDE 8 — DEVELOPMENT PROCESS
+  ══════════════════════════════════════════ -->
+  <section class="slide" data-notes="Development happened in two major phases. First I built V2 — a pure command-line engine where the LLM plays both the player characters AND the DM autonomously. That taught me a lot about structured LLM output and event sourcing. Then I rebuilt it as a proper web application where a human player submits actions through a browser UI. GitHub was my tracking tool — I have a visible PR history with commits for each major milestone.">
+    <div class="slide-eyebrow">Development Process</div>
+    <h2 class="slide-title" style="font-size: clamp(1.4rem,2.5vw,1.9rem); margin-bottom: 28px;">How It Was Built</h2>
+    <div class="two-col" style="align-items: start;">
+      <div>
+        <div class="timeline">
+          <div class="tl-item">
+            <div class="tl-dot"></div>
+            <div class="tl-content">
+              <div class="tl-phase">Phase 1 — V2 CLI Engine</div>
+              <div class="tl-desc">Built event-sourced CLI engine (V2/). LLMs play both player characters and DM autonomously. Structured <code style="font-size:0.75rem;color:var(--blue);">&lt;intent /&gt;</code> tag protocol forces valid actions. 15-room dungeon demo with 2 PCs and 6 NPCs.</div>
+            </div>
+          </div>
+          <div class="tl-item">
+            <div class="tl-dot"></div>
+            <div class="tl-content">
+              <div class="tl-phase">Phase 2 — FastAPI Backend</div>
+              <div class="tl-desc">Rebuilt as async FastAPI service. SQLite persistence, Alembic migrations, 7 REST + SSE endpoints. Orchestrator coordinates engine + 5 AI agents per action.</div>
+            </div>
+          </div>
+          <div class="tl-item">
+            <div class="tl-dot"></div>
+            <div class="tl-content">
+              <div class="tl-phase">Phase 3 — Web Frontend</div>
+              <div class="tl-desc">Vanilla JS SPA with dark D&D theme. Campaign manager, character sheets, enemy tracker, streaming narration panel. Bootstrap 5, Cinzel + Garamond fonts.</div>
+            </div>
+          </div>
+          <div class="tl-item">
+            <div class="tl-dot"></div>
+            <div class="tl-content">
+              <div class="tl-phase">Phase 4 — Testing + Cleanup</div>
+              <div class="tl-desc">383 test functions across 14 files. Removed ChromaDB (unused, ~1GB Docker weight). Cleaned repo for GitHub. Added Docker Compose for one-command deployment.</div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div>
+        <div class="card" style="margin-bottom: 16px;">
+          <div class="card-title">📊 GitHub Tracking</div>
+          <ul>
+            <li>11 commits on main branch</li>
+            <li>PR #1 merged from sbranch1</li>
+            <li>Commit messages describe each milestone</li>
+            <li>github.com/abduyea/Dnd-llm-multiagent-campaign</li>
+          </ul>
+        </div>
+        <div class="card">
+          <div class="card-title">🧪 Test Coverage</div>
+          <ul>
+            <li>test_agents.py — 74 tests (AI agent behavior)</li>
+            <li>test_api.py — 90 tests (all endpoints)</li>
+            <li>test_game_flow.py — 60 integration tests</li>
+            <li>test_engine_* — 72 tests (dice, combat, turns)</li>
+            <li>test_comprehensive.py — 50 edge cases</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ══════════════════════════════════════════
+       SLIDE 9 — CHALLENGES AND SOLUTIONS
+  ══════════════════════════════════════════ -->
+  <section class="slide" data-notes="The biggest technical challenge was LLM reliability. Local models don't always output valid JSON. For the memory and NPC agents I built a keyword-extraction fallback — if JSON parsing fails, the system falls back to regex patterns that catch common story events. The other big one was the qwen3 think-block — that model emits its reasoning inside <think> tags before the actual answer. I had to implement real-time buffered stripping while streaming tokens.">
+    <div class="slide-eyebrow">Challenges</div>
+    <h2 class="slide-title" style="font-size: clamp(1.4rem,2.5vw,1.9rem); margin-bottom: 24px;">What I Had to Figure Out</h2>
+    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 14px; width: 100%; max-width: 1000px; text-align: left;">
+      <div class="challenge-card">
+        <div class="challenge-title">LLM JSON Reliability</div>
+        <div class="challenge-body">Local models sometimes return prose instead of valid JSON for memory/NPC extraction.</div>
+        <div class="challenge-solve">→ Built keyword-extraction fallback. Regex scans narration for NPC/location/item signals when JSON parsing fails.</div>
+      </div>
+      <div class="challenge-card">
+        <div class="challenge-title">Think-Block Stripping (qwen3)</div>
+        <div class="challenge-body">qwen3 emits <code style="font-size:0.75rem;">&lt;think&gt;...&lt;/think&gt;</code> reasoning blocks before the actual response, including during streaming.</div>
+        <div class="challenge-solve">→ Implemented real-time buffered state machine to suppress think blocks while streaming tokens without blocking the stream.</div>
+      </div>
+      <div class="challenge-card">
+        <div class="challenge-title">Context Window Management</div>
+        <div class="challenge-body">Long sessions (20+ turns) would exceed the LLM's context window, degrading narration quality.</div>
+        <div class="challenge-solve">→ Session summary compression: beyond turn 20, a Summary Agent writes a chronicle, and raw history is capped to the last 4 turns.</div>
+      </div>
+      <div class="challenge-card">
+        <div class="challenge-title">NPC Name Extraction</div>
+        <div class="challenge-body">Extracting NPC names from narration text was unreliable — D&D spell names (Fireball, Shield) look like proper nouns.</div>
+        <div class="challenge-solve">→ Built a stop-word + D&D keyword blocklist (120+ terms) applied before NPC name candidate extraction.</div>
+      </div>
+      <div class="challenge-card">
+        <div class="challenge-title">ChromaDB Bloat</div>
+        <div class="challenge-body">ChromaDB was in the original dependency list but never called in runtime code — adding ~1GB to the Docker image.</div>
+        <div class="challenge-solve">→ Audited all imports, confirmed zero runtime usage, removed from all dependency files and Docker layers.</div>
+      </div>
+      <div class="challenge-card">
+        <div class="challenge-title">Attack Target Resolution</div>
+        <div class="challenge-body">Frontend's enemy tracker stores enemies but they aren't registered as DB characters — attack engine couldn't find them.</div>
+        <div class="challenge-solve">→ Enemy context extraction: parses "[Target: Name]" prefix in action description, builds a synthetic CharacterState from frontend HP/AC data.</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ══════════════════════════════════════════
+       SLIDE 10 — DEMO WORKFLOW
+  ══════════════════════════════════════════ -->
+  <section class="slide" data-notes="For the live demo, I'll walk through a complete game loop. Start by creating a campaign called 'The Lost Mines', then create a character — I'll use a Level 3 Human Fighter named Aldric. Then start a session, add a goblin enemy with 15 HP, and have Aldric attack with a melee strike. Watch the dice resolve, then see the AI narrate the outcome in real time as tokens stream in. Then I'll show the memory tab to prove facts were extracted.">
+    <div class="slide-eyebrow">Live Demo</div>
+    <h2 class="slide-title" style="font-size: clamp(1.4rem,2.5vw,1.9rem); margin-bottom: 26px;">Demo Flow</h2>
+    <div class="demo-steps">
+      <div class="demo-step">
+        <div class="step-num">1</div>
+        <div class="step-text"><strong>Start the stack</strong> — <span class="step-code">docker compose up</span> or <span class="step-code">uvicorn + python -m http.server 3000</span>. Open <span class="step-code">localhost:3000</span>. Health dot turns green.</div>
+      </div>
+      <div class="demo-step">
+        <div class="step-num">2</div>
+        <div class="step-text"><strong>Create a Campaign</strong> — Name: "The Lost Mines", Setting: "Forgotten Realms". Campaign appears in the list.</div>
+      </div>
+      <div class="demo-step">
+        <div class="step-num">3</div>
+        <div class="step-text"><strong>Add a Character</strong> — Click "Roll 4d6" to generate stats, name the character, choose race/class/level. Character sheet modal shows full D&D 5e stats.</div>
+      </div>
+      <div class="demo-step">
+        <div class="step-num">4</div>
+        <div class="step-text"><strong>Start a Session</strong> — "Session 1 — Into the Dungeon". Add a Goblin enemy (HP 15, AC 13) with persona "snarling guard dog".</div>
+      </div>
+      <div class="demo-step">
+        <div class="step-num">5</div>
+        <div class="step-text"><strong>Submit an Attack</strong> — Action type: <span class="step-code">attack_melee</span>, description: "I swing my longsword at the goblin". Watch dice roll, hit/miss resolve, then narration tokens stream in live.</div>
+      </div>
+      <div class="demo-step">
+        <div class="step-num">6</div>
+        <div class="step-text"><strong>Show NPC Dialogue</strong> — The goblin responds with an in-character line. Try a <span class="step-code">talk</span> action and see NPC persona influence the response.</div>
+      </div>
+      <div class="demo-step">
+        <div class="step-num">7</div>
+        <div class="step-text"><strong>End Session</strong> — Trigger the Summary Agent. Show the AI-generated session chronicle in the console or API response.</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ══════════════════════════════════════════
+       SLIDE 11 — RESULTS
+  ══════════════════════════════════════════ -->
+  <section class="slide" data-notes="Here are the concrete outcomes. 383 tests, all passing. The system handles missing Ollama gracefully — it falls back to static narration, so the app never crashes even if the LLM is down. The XP system and level progression are working. The streaming narration feels responsive even on modest hardware. The Docker setup deploys the entire stack in one command.">
+    <div class="slide-eyebrow">Results</div>
+    <h2 class="slide-title" style="font-size: clamp(1.4rem,2.5vw,1.9rem); margin-bottom: 22px;">What Was Achieved</h2>
+    <div class="stat-row">
+      <div class="stat-box">
+        <div class="stat-num">383</div>
+        <div class="stat-label">Test Functions</div>
+      </div>
+      <div class="stat-box">
+        <div class="stat-num">5</div>
+        <div class="stat-label">AI Agents</div>
+      </div>
+      <div class="stat-box">
+        <div class="stat-num">14</div>
+        <div class="stat-label">Action Types</div>
+      </div>
+      <div class="stat-box">
+        <div class="stat-num">7</div>
+        <div class="stat-label">API Endpoints</div>
+      </div>
+      <div class="stat-box">
+        <div class="stat-num">3</div>
+        <div class="stat-label">LLM Fallbacks</div>
+      </div>
+    </div>
+    <div class="two-col" style="max-width: 900px;">
+      <div class="card">
+        <div class="card-title">✅ Working End-to-End</div>
+        <ul>
+          <li>Full campaign lifecycle (create → play → summary)</li>
+          <li>Real-time streaming narration via SSE</li>
+          <li>Combat: hit/miss/crit with correct D&D 5e math</li>
+          <li>NPC dialogue shaped by persona + disposition</li>
+          <li>Memory facts persisted and injected into future prompts</li>
+          <li>Docker Compose deploys everything in one command</li>
+        </ul>
+      </div>
+      <div class="card">
+        <div class="card-title">📋 Still In Progress / Known Gaps</div>
+        <ul>
+          <li>No user authentication (single-user local app)</li>
+          <li>No spell slot tracking (spells treated as general actions)</li>
+          <li>No multiplayer (one active character per session UI)</li>
+          <li>NPC HP not persisted between separate sessions</li>
+          <li>No map or visual dungeon renderer</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <!-- ══════════════════════════════════════════
+       SLIDE 12 — LESSONS LEARNED
+  ══════════════════════════════════════════ -->
+  <section class="slide" data-notes="The biggest professional lesson was the importance of separating concerns. In early iterations the AI was doing everything — resolving dice, narrating, deciding outcomes. That made it unreliable and hard to test. Pulling mechanics into a deterministic engine and leaving only narration to the AI made the whole system testable and predictable. That's a lesson I'll carry into any future AI system work.">
+    <div class="slide-eyebrow">Lessons Learned</div>
+    <h2 class="slide-title" style="font-size: clamp(1.4rem,2.5vw,1.9rem); margin-bottom: 26px;">What This Project Taught Me</h2>
+    <div style="width: 100%; max-width: 900px; text-align: left;">
+      <div class="lesson-item">
+        <div class="lesson-icon">🔧</div>
+        <div class="lesson-text">
+          <div class="lesson-head">New Skill: Async Python at scale</div>
+          <div class="lesson-body">First time building a full async FastAPI application with SQLAlchemy async. Learned how connection pooling, async context managers, and SSE generators interact.</div>
+        </div>
+      </div>
+      <div class="lesson-item">
+        <div class="lesson-icon">🤖</div>
+        <div class="lesson-body">
+          <div class="lesson-head">New Skill: LLM prompt engineering for structured output</div>
+          <div class="lesson-body">Learned to design system prompts that constrain LLM behavior — strict rules, second-person tense, forbidding specific words. Built fallbacks for when the model ignores constraints.</div>
+        </div>
+      </div>
+      <div class="lesson-item">
+        <div class="lesson-icon">📐</div>
+        <div class="lesson-text">
+          <div class="lesson-head">Improved: Software architecture (separation of concerns)</div>
+          <div class="lesson-body">"LLM proposes, engine disposes" — keeping deterministic rules separate from AI narration made testing possible and the system trustworthy.</div>
+        </div>
+      </div>
+      <div class="lesson-item">
+        <div class="lesson-icon">🧪</div>
+        <div class="lesson-text">
+          <div class="lesson-head">Improved: Test-driven development with mocking</div>
+          <div class="lesson-body">383 tests using in-memory SQLite overrides and patched Ollama client. Learned that untested fallback paths are where real bugs hide.</div>
+        </div>
+      </div>
+      <div class="lesson-item">
+        <div class="lesson-icon">❌</div>
+        <div class="lesson-text">
+          <div class="lesson-head">What Failed: Letting AI resolve mechanics</div>
+          <div class="lesson-body">Early prototype had the LLM decide if attacks hit. It was inconsistent and impossible to test. Replacing it with pure math was the right call.</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ══════════════════════════════════════════
+       SLIDE 13 — FUTURE IMPROVEMENTS
+  ══════════════════════════════════════════ -->
+  <section class="slide" data-notes="If I continued this project, the highest-value additions would be multi-player support and a map renderer. Those two features would make this genuinely usable for a real D&D group. The interpersonal skills I developed through this project — articulating technical trade-offs clearly, scoping work that can ship — will directly help in job interviews and in team projects. This project is going into my portfolio.">
+    <div class="slide-eyebrow">Future Work</div>
+    <h2 class="slide-title" style="font-size: clamp(1.4rem,2.5vw,1.9rem); margin-bottom: 26px;">What Comes Next</h2>
+    <div class="future-grid">
+      <div class="future-item">
+        <div class="future-icon">👥</div>
+        <div>
+          <div class="future-head">Multiplayer Support</div>
+          <div class="future-body">WebSockets for real-time multi-player sessions. Each player controls their own character. DM narration broadcasts to all connected clients.</div>
+        </div>
+      </div>
+      <div class="future-item">
+        <div class="future-icon">🗺️</div>
+        <div>
+          <div class="future-head">Visual Dungeon Map</div>
+          <div class="future-body">Grid-based map renderer using HTML Canvas. Rooms reveal as players explore. Enemy tokens move on the map.</div>
+        </div>
+      </div>
+      <div class="future-item">
+        <div class="future-icon">📖</div>
+        <div>
+          <div class="future-head">Full Spell System</div>
+          <div class="future-body">Spell slot tracking, concentration rules, area-of-effect targeting. Full D&D 5e SRD spell list integration.</div>
+        </div>
+      </div>
+      <div class="future-item">
+        <div class="future-icon">🔒</div>
+        <div>
+          <div class="future-head">User Accounts</div>
+          <div class="future-body">JWT authentication, per-user campaign isolation, save/load game state. Would allow cloud deployment as a shared platform.</div>
+        </div>
+      </div>
+      <div class="future-item">
+        <div class="future-icon">🌍</div>
+        <div>
+          <div class="future-head">Potential Impact</div>
+          <div class="future-body">Accessible D&D for solo players, homebound gamers, and educators using tabletop RPG for creative writing and social skills development.</div>
+        </div>
+      </div>
+      <div class="future-item">
+        <div class="future-icon">💼</div>
+        <div>
+          <div class="future-head">Career Impact</div>
+          <div class="future-body">Demonstrates async Python, multi-agent AI systems, full-stack development, and TDD — all in a portfolio-ready, publicly visible GitHub repo.</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ══════════════════════════════════════════
+       SLIDE 14 — CONCLUSION
+  ══════════════════════════════════════════ -->
+  <section class="slide" data-notes="To wrap up: I built a complete, locally-run AI Dungeon Master platform. The game engine is deterministic and correct. The AI handles only narrative — and it does that well. The system is tested, documented, and deployed via Docker. This project stretched me technically and I'm proud of the architecture decisions. Happy to take questions or go straight to the live demo.">
+    <div class="slide-eyebrow">Conclusion</div>
+    <h2 class="slide-title" style="font-size: clamp(1.6rem,3vw,2.2rem); margin-bottom: 20px;">What Was Built</h2>
+    <p class="conclusion-quote">
+      "A local AI Dungeon Master that plays by the rules,<br>
+      remembers the story, and keeps the adventure alive —<br>
+      no cloud required, no game master needed."
+    </p>
+    <div class="stat-row">
+      <div class="stat-box" style="min-width: 110px;">
+        <div class="stat-num" style="font-size: 1.6rem;">✓</div>
+        <div class="stat-label">Rules-correct game engine</div>
+      </div>
+      <div class="stat-box" style="min-width: 110px;">
+        <div class="stat-num" style="font-size: 1.6rem;">✓</div>
+        <div class="stat-label">5 coordinated AI agents</div>
+      </div>
+      <div class="stat-box" style="min-width: 110px;">
+        <div class="stat-num" style="font-size: 1.6rem;">✓</div>
+        <div class="stat-label">Full web application</div>
+      </div>
+      <div class="stat-box" style="min-width: 110px;">
+        <div class="stat-num" style="font-size: 1.6rem;">✓</div>
+        <div class="stat-label">383 tests passing</div>
+      </div>
+    </div>
+    <div class="github-box">github.com/abduyea/Dnd-llm-multiagent-campaign</div>
+    <p style="font-size: 0.78rem; color: var(--muted); margin-top: 20px;">Thank you — ready for live demo or questions</p>
+  </section>
+
+</div>
+
+<!-- ── Speaker Notes Bar ── -->
+<div id="notes-bar"></div>
+
+<!-- ── Keyboard hint ── -->
+<div id="kbd-hint">← → arrow keys to navigate &nbsp;|&nbsp; N for notes</div>
+
+<script>
+  const slides   = document.querySelectorAll('.slide');
+  const progress = document.getElementById('progress');
+  const counter  = document.getElementById('counter');
+  const titleEl  = document.getElementById('slide-title');
+  const notesBar = document.getElementById('notes-bar');
+  let cur = 0;
+
+  const TITLES = [
+    'Title',
+    'Project Overview',
+    'Problem Statement',
+    'Goals & Objectives',
+    'Technologies Used',
+    'System Architecture',
+    'Features Implemented',
+    'Development Process',
+    'Challenges & Solutions',
+    'Demo Workflow',
+    'Results',
+    'Lessons Learned',
+    'Future Improvements',
+    'Conclusion',
+  ];
+
+  function show(n) {
+    slides[cur].classList.remove('active');
+    cur = Math.max(0, Math.min(n, slides.length - 1));
+    slides[cur].classList.add('active');
+
+    const pct = ((cur + 1) / slides.length) * 100;
+    progress.style.width = pct + '%';
+    counter.textContent  = `${cur + 1} / ${slides.length}`;
+    titleEl.textContent  = TITLES[cur] || '';
+
+    const note = slides[cur].dataset.notes || '';
+    notesBar.innerHTML = note
+      ? `<strong>Speaker notes:</strong> ${note}`
+      : '<em style="color: var(--border);">No notes for this slide.</em>';
+  }
+
+  function nextSlide() { show(cur + 1); }
+  function prevSlide() { show(cur - 1); }
+
+  let notesVisible = false;
+  function toggleNotes() {
+    notesVisible = !notesVisible;
+    notesBar.classList.toggle('visible', notesVisible);
+    document.getElementById('notes-toggle').style.borderColor = notesVisible ? 'var(--green)' : 'var(--gold)';
+    document.getElementById('notes-toggle').style.color = notesVisible ? 'var(--green)' : 'var(--gold)';
+  }
+
+  document.addEventListener('keydown', e => {
+    if (e.key === 'ArrowRight' || e.key === 'ArrowDown' || e.key === ' ') { e.preventDefault(); nextSlide(); }
+    if (e.key === 'ArrowLeft'  || e.key === 'ArrowUp')   { e.preventDefault(); prevSlide(); }
+    if (e.key === 'n' || e.key === 'N') toggleNotes();
+    if (e.key === 'Home') show(0);
+    if (e.key === 'End')  show(slides.length - 1);
+  });
+
+  // Swipe support
+  let tx = 0;
+  document.addEventListener('touchstart', e => tx = e.touches[0].clientX, { passive: true });
+  document.addEventListener('touchend',   e => {
+    const dx = e.changedTouches[0].clientX - tx;
+    if (Math.abs(dx) > 50) dx < 0 ? nextSlide() : prevSlide();
+  }, { passive: true });
+
+  show(0);
+</script>
+</body>
+</html>

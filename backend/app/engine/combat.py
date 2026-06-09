@@ -132,18 +132,32 @@ def compute_attack_roll(
     )
 
 
+# Default weapon damage die used when the action carries no explicit dice
+# expression (the UI does not attach one to basic attacks). Without this, an
+# attack — including a critical hit — would resolve to 0 damage.
+_DEFAULT_WEAPON_DICE: dict[str, str] = {
+    "attack_melee": "1d8",
+    "attack_ranged": "1d6",
+}
+_FALLBACK_WEAPON_DIE = "1d6"
+
+
 def _roll_damage(
     action: ActionInput,
     attacker: CharacterState,
     is_critical: bool = False,
     seed: int | None = None,
 ) -> int:
-    if action.dice_expression:
-        result = roll_dice(action.dice_expression, seed=seed)
-        if is_critical:
-            return result.total * 2
-        return result.total
-    return 0
+    expression = action.dice_expression or _DEFAULT_WEAPON_DICE.get(
+        action.action_type, _FALLBACK_WEAPON_DIE
+    )
+    try:
+        result = roll_dice(expression, seed=seed)
+    except ValueError:
+        return 0
+    # D&D 5e critical hits double the dice rolled (the flat modifier is added once
+    # by the caller), so a crit always deals more than the equivalent normal hit.
+    return result.total * 2 if is_critical else result.total
 
 
 def apply_damage(target: CharacterState, damage: int) -> CharacterState:

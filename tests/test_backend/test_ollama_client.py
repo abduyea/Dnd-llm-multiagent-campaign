@@ -8,6 +8,7 @@ from backend.app.services.ollama_client import (
     _strip_think_tags,
     generate,
     generate_stream,
+    warmup_model,
 )
 
 
@@ -186,7 +187,8 @@ class TestGenerate:
         with patch("backend.app.services.ollama_client._call_ollama", side_effect=mock_call):
             result = generate(prompt="test", action_text="final")
             assert result == _static_fallback("final")
-            assert results == ["qwen3", "mistral-nemo", "llama3.2:3b"]
+            # Fast primary model is tried first, heavier models only as fallbacks.
+            assert results == ["llama3.2:3b", "qwen3", "mistral-nemo"]
 
 
 class TestCallOllama:
@@ -334,3 +336,101 @@ class TestGenerateStream:
             tokens = [t async for t in generate_stream("p")]
 
         assert tokens == ["Hello"]
+
+    @pytest.mark.asyncio
+    async def test_generate_stream_skips_malformed_json_lines(self) -> None:
+        """Non-JSON lines in the stream are skipped without aborting the turn."""
+        import json
+
+        async def fake_aiter_lines():  # type: ignore[return]
+            yield "not json at all"  # malformed — must be skipped
+            yield json.dumps({"response": "Steel ", "done": False})
+            yield json.dumps({"response": "rings.", "done": True})
+
+        mock_resp = AsyncMock()
+        mock_resp.raise_for_status = MagicMock()
+        mock_resp.aiter_lines = fake_aiter_lines
+        mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+        mock_resp.__aexit__ = AsyncMock(return_value=False)
+
+        mock_client = AsyncMock()
+        mock_client.stream = MagicMock(return_value=mock_resp)
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+
+        with patch("httpx.AsyncClient", return_value=mock_client):
+            tokens = [t async for t in generate_stream("p")]
+
+        assert "".join(tokens) == "Steel rings."
+
+
+class TestWarmupModel:
+    """The opt-in startup warmup that preloads the primary model."""
+
+    @pytest.mark.asyncio
+    async def test_returns_false_when_ollama_unavailable(self) -> None:
+        # Unreachable Ollama must no-op (never raise) so startup is always safe.
+        with patch(
+            "backend.app.services.ollama_client.is_ollama_available", return_value=False
+        ):
+            assert await warmup_model() is False
+
+    @pytest.mark.asyncio
+    async def test_returns_true_on_successful_warmup(self) -> None:
+        mock_resp = MagicMock()
+        mock_resp.raise_for_status = MagicMock()
+
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=mock_resp)
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+
+        with (
+            patch(
+                "backend.app.services.ollama_client.is_ollama_available", return_value=True
+            ),
+            patch("httpx.AsyncClient", return_value=mock_client),
+        ):
+            assert await warmup_model() is True
+
+    @pytest.mark.asyncio
+    async def test_returns_false_on_http_error(self) -> None:
+        import httpx as _httpx
+
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(side_effect=_httpx.ConnectError("refused"))
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+
+        with (
+            patch(
+                "backend.app.services.ollama_client.is_ollama_available", return_value=True
+            ),
+            patch("httpx.AsyncClient", return_value=mock_client),
+        ):
+            assert await warmup_model() is False
+
+
+class TestCallOllamaJsonMode:
+    def test_format_json_sets_ollama_json_mode(self) -> None:
+        # format_json=True must add "format": "json" to the request payload so the
+        # model is constrained to valid JSON (NPC dialogue / memory extraction).
+        captured: dict[str, object] = {}
+
+        def capture_post(url: str, json: dict[str, object]) -> MagicMock:
+            captured.update(json)
+            resp = MagicMock()
+            resp.raise_for_status = MagicMock()
+            resp.json.return_value = {"response": "[]"}
+            return resp
+
+        mock_http_client = MagicMock()
+        mock_http_client.post.side_effect = capture_post
+
+        with patch("httpx.Client") as mock_client_cls:
+            mock_client_cls.return_value.__enter__.return_value = mock_http_client
+            mock_client_cls.return_value.__exit__.return_value = False
+
+            _call_ollama(model="qwen3", prompt="test", timeout=5, format_json=True)
+
+        assert captured.get("format") == "json"

@@ -1,9 +1,13 @@
 /**
- * api.js — All HTTP calls to the D&D Storyteller backend.
+ * api.js — All HTTP calls to the D&D Multi-AI Agent Storytelling System backend.
  * Returns plain objects; throws Error with .message on non-2xx.
  */
 
-const API_BASE = "http://localhost:8000/api/v1";
+// Backend origin. Defaults to the local dev server but can be overridden before
+// this script loads (e.g. <script>window.DND_API_BASE = "https://api.example"</script>)
+// so the same frontend can point at a non-localhost backend without code edits.
+const API_ORIGIN = (window.DND_API_BASE || "http://localhost:8000").replace(/\/+$/, "");
+const API_BASE = API_ORIGIN + "/api/v1";
 
 async function _fetch(path, opts = {}) {
   const res = await fetch(API_BASE + path, {
@@ -15,12 +19,16 @@ async function _fetch(path, opts = {}) {
     try { const d = await res.json(); msg = d.detail || d.message || msg; } catch {}
     throw new Error(msg);
   }
-  return res.json();
+  // Tolerate empty bodies (e.g. 204 No Content from DELETE) so callers that
+  // don't need a payload can share this helper instead of re-implementing it.
+  if (res.status === 204) return null;
+  const text = await res.text();
+  return text ? JSON.parse(text) : null;
 }
 
 // ── Health ──────────────────────────────────────────────
 async function healthCheck() {
-  const res = await fetch("http://localhost:8000/health");
+  const res = await fetch(API_ORIGIN + "/health");
   return res.json();
 }
 
@@ -46,12 +54,7 @@ async function importCampaign(bundle) {
   return _fetch("/campaigns/import", { method: "POST", body: JSON.stringify(bundle) });
 }
 async function deleteCampaign(id) {
-  const res = await fetch(API_BASE + `/campaigns/${id}`, { method: "DELETE" });
-  if (!res.ok) {
-    let msg = `HTTP ${res.status}`;
-    try { const d = await res.json(); msg = d.detail || msg; } catch {}
-    throw new Error(msg);
-  }
+  return _fetch(`/campaigns/${id}`, { method: "DELETE" });
 }
 
 // ── Characters ──────────────────────────────────────────

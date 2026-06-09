@@ -1,0 +1,105 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="960" viewBox="0 0 1440 960" preserveAspectRatio="xMidYMax slice">
+  <defs>
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#1a1640"/>
+      <stop offset="35%" stop-color="#120e2b"/>
+      <stop offset="70%" stop-color="#0b0818"/>
+      <stop offset="100%" stop-color="#06040c"/>
+    </linearGradient>
+    <radialGradient id="moonGlow" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#f6ebcb" stop-opacity="0.78"/>
+      <stop offset="30%" stop-color="#e2d09a" stop-opacity="0.30"/>
+      <stop offset="100%" stop-color="#d9c690" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="horizonWarm" cx="50%" cy="100%" r="60%">
+      <stop offset="0%" stop-color="#7a4a1e" stop-opacity="0.40"/>
+      <stop offset="55%" stop-color="#3a2410" stop-opacity="0.16"/>
+      <stop offset="100%" stop-color="#3a2410" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="moonBody" cx="42%" cy="40%" r="62%">
+      <stop offset="0%" stop-color="#fbf4dc"/>
+      <stop offset="80%" stop-color="#e7d6a6"/>
+      <stop offset="100%" stop-color="#cdbb84"/>
+    </radialGradient>
+    <radialGradient id="horizonHaze" cx="50%" cy="100%" r="75%">
+      <stop offset="0%" stop-color="#2a1c3e" stop-opacity="0.55"/>
+      <stop offset="60%" stop-color="#140e22" stop-opacity="0.25"/>
+      <stop offset="100%" stop-color="#140e22" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="mist" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#0a0816" stop-opacity="0"/>
+      <stop offset="100%" stop-color="#05040a" stop-opacity="0.95"/>
+    </linearGradient>
+    <filter id="soft" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur stdDeviation="3"/>
+    </filter>
+  </defs>
+
+  <!-- Night sky -->
+  <rect width="1440" height="960" fill="url(#sky)"/>
+  <rect width="1440" height="960" fill="url(#horizonHaze)"/>
+  <rect width="1440" height="960" fill="url(#horizonWarm)"/>
+
+  <!-- Stars -->
+  <g fill="#e8e0c8">
+    <circle cx="180" cy="120" r="1.1" opacity="0.8"/>
+    <circle cx="320" cy="80" r="0.9" opacity="0.6"/>
+    <circle cx="520" cy="160" r="1.3" opacity="0.7"/>
+    <circle cx="700" cy="90" r="0.8" opacity="0.5"/>
+    <circle cx="900" cy="140" r="1.0" opacity="0.65"/>
+    <circle cx="1180" cy="110" r="1.2" opacity="0.75"/>
+    <circle cx="1310" cy="200" r="0.9" opacity="0.6"/>
+    <circle cx="240" cy="260" r="0.8" opacity="0.45"/>
+    <circle cx="1040" cy="240" r="0.9" opacity="0.5"/>
+    <circle cx="60" cy="200" r="1.0" opacity="0.55"/>
+  </g>
+
+  <!-- Moon -->
+  <circle cx="1130" cy="210" r="320" fill="url(#moonGlow)"/>
+  <circle cx="1130" cy="210" r="82" fill="url(#moonBody)"/>
+  <circle cx="1108" cy="188" r="11" fill="#d8c891" opacity="0.45"/>
+  <circle cx="1150" cy="228" r="8" fill="#d8c891" opacity="0.4"/>
+  <circle cx="1142" cy="186" r="6" fill="#d8c891" opacity="0.35"/>
+
+  <!-- Far mountain ridge -->
+  <path d="M0 720 L120 650 L260 700 L420 600 L560 680 L720 590 L880 670 L1040 610 L1200 690 L1340 640 L1440 700 L1440 960 L0 960 Z"
+        fill="#0a0814" opacity="0.85"/>
+
+  <!-- Castle silhouette on the central hill -->
+  <g fill="#060510">
+    <path d="M470 960 L470 720 Q720 600 970 720 L970 960 Z"/>
+    <!-- keep + towers -->
+    <rect x="650" y="560" width="140" height="200"/>
+    <rect x="585" y="600" width="60" height="160"/>
+    <rect x="795" y="600" width="60" height="160"/>
+    <rect x="540" y="650" width="46" height="110"/>
+    <rect x="854" y="650" width="46" height="110"/>
+    <!-- battlements -->
+    <path d="M650 560 h16 v-16 h16 v16 h16 v-16 h16 v16 h16 v-16 h16 v16 h16 v-16 h16 v16 h2 v-16 h-2 v16"/>
+    <rect x="650" y="544" width="16" height="18"/>
+    <rect x="682" y="544" width="16" height="18"/>
+    <rect x="714" y="544" width="16" height="18"/>
+    <rect x="746" y="544" width="16" height="18"/>
+    <rect x="774" y="544" width="16" height="18"/>
+    <!-- tower spires -->
+    <path d="M585 600 L615 552 L645 600 Z"/>
+    <path d="M795 600 L825 552 L855 600 Z"/>
+  </g>
+
+  <!-- Torch-lit windows -->
+  <g fill="#f0b347">
+    <rect x="668" y="600" width="12" height="20" rx="2" opacity="0.9"/>
+    <rect x="712" y="600" width="12" height="20" rx="2" opacity="0.85"/>
+    <rect x="760" y="600" width="12" height="20" rx="2" opacity="0.9"/>
+    <rect x="600" y="650" width="10" height="16" rx="2" opacity="0.8"/>
+    <rect x="820" y="650" width="10" height="16" rx="2" opacity="0.8"/>
+  </g>
+  <g fill="#f0b347" filter="url(#soft)" opacity="0.5">
+    <circle cx="674" cy="610" r="14"/>
+    <circle cx="718" cy="610" r="13"/>
+    <circle cx="766" cy="610" r="14"/>
+  </g>
+
+  <!-- Foreground mist -->
+  <rect x="0" y="640" width="1440" height="320" fill="url(#mist)"/>
+</svg>
