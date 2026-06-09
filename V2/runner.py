@@ -41,6 +41,7 @@ from models import (
     AttributeDelta,
     AttributeSet,
     CombatEnd,
+    CombatParticipantsAdded,
     CombatStart,
     DiceRolled,
     DMNarration,
@@ -174,14 +175,19 @@ def run_turn(
 
     # 1. Player's prose commits directly, outside the buffer.
     #    Even on a fallback path, the player's words survive.
-    log.append(
-        PlayerAction(
-            player_id=player_id,
-            location_id=location_id,
-            text=turn_result.narration_text,
-        ),
-        EventCause(kind="player_action", turn_id=turn_id, player_id=player_id),
-    )
+    #    Empty text means the player LLM gave valid intents but no
+    #    narration; we skip the PlayerAction so the player record does
+    #    not contradict the intents that actually fire (the DM's
+    #    narration of the intent outcomes carries the beat).
+    if turn_result.narration_text:
+        log.append(
+            PlayerAction(
+                player_id=player_id,
+                location_id=location_id,
+                text=turn_result.narration_text,
+            ),
+            EventCause(kind="player_action", turn_id=turn_id, player_id=player_id),
+        )
 
     # 2. Record the player-planning LLM attempts.
     _record_player_attempts(measurements, "player_plan", turn_result.attempts)
@@ -195,31 +201,35 @@ def run_turn(
         )
         return TurnResult(turn_id=turn_id, succeeded=False, fallback_beat="intent")
 
-    # 4. Walk the validated intent plan.
-    pre_mode = scheduler.current_mode(log.events())
+    # 4. Walk the validated intent plan. Combat_start/join is staged
+    #    *before* an attack rolls — any valid attack-attempt on an enemy
+    #    flips the room to combat first, so the attack roll itself
+    #    happens inside combat (no free pre-combat hits).
+    current_mode = scheduler.current_mode(log.events())
     buffer = TurnBuffer(log)
     outcomes: list[IntentOutcome] = []
-    combat_trigger_target: str | None = None
 
     for intent in turn_result.intents:
+        if isinstance(intent, AttackIntent):
+            pre_state = buffer.project()
+            if (
+                _attack_skip_reason(intent, pre_state, player_id) is None
+                and _is_enemy(player_id, intent.target, pre_state)
+            ):
+                if current_mode == "exploration":
+                    _stage_combat_start_auto(
+                        buffer, player_id, intent.target, location_id, turn_id, rng,
+                    )
+                    current_mode = "combat"
+                else:
+                    _stage_combat_join_auto(
+                        buffer, player_id, intent.target, location_id, turn_id, rng,
+                    )
+
         outcome = _resolve_intent(intent, buffer, player_id, turn_id, rng)
         outcomes.append(outcome)
         if isinstance(intent, WaitIntent):
             break
-        # Detect when an attack lands on a hostile — needed for combat_start.
-        if isinstance(intent, AttackIntent) and outcome.resolved and "HIT" in outcome.summary:
-            target_id = intent.target
-            target = buffer.project().entities.get(target_id)
-            if target is not None and target.attributes.get("status") in ("hostile", "dead"):
-                # "dead" here means we just killed a hostile this intent —
-                # still a hostile engagement that triggers combat.
-                combat_trigger_target = target_id
-
-    # 5. Auto-emit combat_start (M8 runner-decided).
-    if combat_trigger_target is not None and pre_mode == "exploration":
-        _stage_combat_start_auto(
-            buffer, player_id, combat_trigger_target, location_id, turn_id, rng,
-        )
 
     # 6. Narrate the turn.
     state = buffer.project()
@@ -295,29 +305,34 @@ def run_npc_turn(
     # NPCs do not commit a PlayerAction (no freeform input). The DM's
     # narration captures everything that happened.
 
-    pre_mode = scheduler.current_mode(log.events())
+    # Combat is triggered *before* the attack roll resolves — any valid
+    # NPC attack on a PC flips the room to combat first. Symmetric with
+    # the PC-attacks-hostile path in `run_turn`.
+    current_mode = scheduler.current_mode(log.events())
     buffer = TurnBuffer(log)
     outcomes: list[IntentOutcome] = []
-    combat_trigger_target: str | None = None
 
     for intent in npc_result.intents:
+        if isinstance(intent, AttackIntent):
+            pre_state = buffer.project()
+            if (
+                _attack_skip_reason(intent, pre_state, npc_id) is None
+                and _is_enemy(npc_id, intent.target, pre_state)
+            ):
+                if current_mode == "exploration":
+                    _stage_combat_start_auto(
+                        buffer, npc_id, intent.target, location_id, turn_id, rng,
+                    )
+                    current_mode = "combat"
+                else:
+                    _stage_combat_join_auto(
+                        buffer, npc_id, intent.target, location_id, turn_id, rng,
+                    )
+
         outcome = _resolve_intent(intent, buffer, npc_id, turn_id, rng)
         outcomes.append(outcome)
         if isinstance(intent, WaitIntent):
             break
-        # B2.1: NPC attacks landing on a PC also bring the room to
-        # combat-mode. M5 deferred this; M9 brings the trigger to
-        # symmetry with the PC-attacks-hostile path.
-        if isinstance(intent, AttackIntent) and outcome.resolved and "HIT" in outcome.summary:
-            target_id = intent.target
-            target = buffer.project().entities.get(target_id)
-            if target is not None and target.kind == "pc":
-                combat_trigger_target = target_id
-
-    if combat_trigger_target is not None and pre_mode == "exploration":
-        _stage_combat_start_auto(
-            buffer, npc_id, combat_trigger_target, location_id, turn_id, rng,
-        )
 
     post_state = buffer.project()
     narration_result = dm.narrate_turn_outcome(
@@ -511,6 +526,30 @@ def _resolve_move(
             intent=intent, resolved=False,
             summary=f"SKIPPED: {intent.target!r} is not connected to {actor_loc!r}",
         )
+
+    # Gated exit (opt-in, authored): a location may seal a SPECIFIC outward exit
+    # behind a solved puzzle via `gated_exits: {dest_location: solved_target}`.
+    # The exit stays barred until ANY party member carries `solved_<target>` (a
+    # door opened by one PC is open for all). This is the one hard movement gate
+    # the engine enforces, and only where a seed declares it — narrating the door
+    # open does nothing; only the puzzle_answer intent sets the marker.
+    gated_exits = current.attributes.get("gated_exits")
+    if isinstance(gated_exits, dict) and intent.target in gated_exits:
+        required = gated_exits[intent.target]
+        solved = any(
+            e.attributes.get(f"solved_{required}") for e in state.entities.values()
+        )
+        if not solved:
+            return IntentOutcome(
+                intent=intent, resolved=False,
+                summary=(
+                    f"SKIPPED: the way to {intent.target} is SEALED — it will not "
+                    f"open until someone answers the puzzle at {required} with "
+                    f'<intent type="puzzle_answer" target="{required}" '
+                    f'answer="..."/>. Narrating or pushing the door does nothing.'
+                ),
+            )
+
     buffer.stage(
         EntityMoved(entity_id=actor_id, to_location=intent.target),
         EventCause(kind="dm_action", turn_id=turn_id, player_id=actor_id),
@@ -546,6 +585,45 @@ def _resolve_move(
     )
 
 
+def _attack_skip_reason(
+    intent: AttackIntent,
+    state: WorldState,
+    actor_id: str,
+) -> str | None:
+    """Return the SKIP summary string if this attack would be rejected
+    by `_resolve_attack`, else None. The runner calls this to decide
+    whether to stage combat_start *before* the attack rolls — we don't
+    want to flip the room to combat for an attack that's about to be
+    discarded as invalid."""
+    actor = state.entities.get(actor_id)
+    if actor is None:
+        return f"SKIPPED: attacker {actor_id!r} not found"
+    target = state.entities.get(intent.target)
+    if target is None:
+        return f"SKIPPED: target {intent.target!r} not found"
+    if target.location_id != actor.location_id:
+        return f"SKIPPED: target {intent.target!r} not in scene"
+    if intent.target == actor_id:
+        return "SKIPPED: cannot attack self"
+    if target.attributes.get("status") == "dead":
+        return f"SKIPPED: target {intent.target!r} is already dead"
+    return None
+
+
+def _is_enemy(actor_id: str, target_id: str, state: WorldState) -> bool:
+    """Decide whether `target_id` counts as an enemy of `actor_id` for
+    combat-trigger purposes. PCs treat hostile NPCs as enemies; NPCs
+    treat PCs as enemies. Everything else (friendlies, NPC-on-NPC) is
+    excluded so combat doesn't start from accidental swings at allies."""
+    actor = state.entities.get(actor_id)
+    target = state.entities.get(target_id)
+    if actor is None or target is None:
+        return False
+    if actor.kind == "pc":
+        return target.kind == "npc" and target.attributes.get("status") == "hostile"
+    return target.kind == "pc"
+
+
 def _resolve_attack(
     intent: AttackIntent,
     buffer: TurnBuffer,
@@ -554,24 +632,11 @@ def _resolve_attack(
     rng: random.Random,
 ) -> IntentOutcome:
     state = buffer.project()
-    actor = state.entities.get(actor_id)
-    target = state.entities.get(intent.target)
-    if actor is None:
-        return IntentOutcome(intent=intent, resolved=False, summary=f"SKIPPED: attacker {actor_id!r} not found")
-    if target is None:
-        return IntentOutcome(intent=intent, resolved=False, summary=f"SKIPPED: target {intent.target!r} not found")
-    if target.location_id != actor.location_id:
-        return IntentOutcome(
-            intent=intent, resolved=False,
-            summary=f"SKIPPED: target {intent.target!r} not in scene",
-        )
-    if intent.target == actor_id:
-        return IntentOutcome(intent=intent, resolved=False, summary="SKIPPED: cannot attack self")
-    if target.attributes.get("status") == "dead":
-        return IntentOutcome(
-            intent=intent, resolved=False,
-            summary=f"SKIPPED: target {intent.target!r} is already dead",
-        )
+    skip = _attack_skip_reason(intent, state, actor_id)
+    if skip is not None:
+        return IntentOutcome(intent=intent, resolved=False, summary=skip)
+    actor = state.entities[actor_id]
+    target = state.entities[intent.target]
 
     try:
         resolution, payloads = resolve_attack(actor, target, rng)
@@ -1400,56 +1465,148 @@ def _stage_combat_start_auto(
     rng: random.Random,
 ) -> None:
     """Auto-stage CombatStart + initiative dice when an attack just
-    landed a hit that should bring the room to combat-mode while combat
-    was not yet on.
+    landed a hit while combat was not yet on. Called only when
+    pre_mode == "exploration" — once combat is active, new joiners
+    flow through `_stage_combat_join_auto` instead so the existing
+    fight isn't restarted.
 
-    Symmetric across attacker kinds:
-      - PC attacks hostile NPC → participants are the PC + every
-        hostile/dead NPC in the room (existing M8 behavior).
-      - NPC attacks PC → participants are the NPC + every PC in the
-        room (the side under attack) + every other hostile/dead NPC in
-        the room (the attacker's side).
-
-    The general rule: include the actor, include the explicit target,
-    and include every other room occupant who is either a PC or a
-    hostile/dead NPC. Friendly NPCs in the scene (Aldous, Hessa, etc.)
-    are NOT pulled in as combatants — combat is between the PCs and
-    the hostile faction."""
+    Initial participant set is the union of:
+      - the attacking actor
+      - the explicit target (the hostile they just hit)
+      - every PC in the world (regardless of location) — they are all
+        "in the fight" abstractly; ones in other rooms simply act in
+        their own scenes during their initiative slots. This means a
+        PC who walks into the combat room later is already in
+        initiative order, not bolted on as an afterthought.
+      - every LIVE hostile NPC in the actor's room
+    Friendly NPCs (Aldous, Hessa) are deliberately excluded. Dead
+    entities are also excluded — once combat begins, dead participants
+    serve no purpose in the order. (Pre-fix, a freshly-killed hostile
+    in the same room got added with status='dead'; that was rolled
+    forward into wasted initiative slots and confused tie-break.)"""
     state = buffer.project()
     participants: list[str] = [actor_id]
     if target_id != actor_id and target_id in state.entities:
         if target_id not in participants:
             participants.append(target_id)
+    # All PCs join from the start, even ones not in the room.
+    for eid, entity in state.entities.items():
+        if entity.kind != "pc":
+            continue
+        if eid in participants:
+            continue
+        participants.append(eid)
+    # Live hostiles in the room round out the opposing side.
     for eid, entity in state.entities.items():
         if eid in participants:
             continue
         if entity.location_id != location_id:
             continue
-        status = entity.attributes.get("status")
-        if entity.kind == "pc" or status in ("hostile", "dead"):
-            participants.append(eid)
+        if entity.kind != "npc":
+            continue
+        if entity.attributes.get("status") != "hostile":
+            continue
+        participants.append(eid)
 
     transition_cause = EventCause(kind="combat_transition", turn_id=turn_id, player_id=actor_id)
     dice_cause = EventCause(kind="dice_resolution", turn_id=turn_id, player_id=actor_id)
     buffer.stage(CombatStart(participants=list(participants)), transition_cause)
 
     for pid in participants:
+        _stage_initiative_roll(buffer, state, pid, rng, dice_cause)
+
+
+def _stage_combat_join_auto(
+    buffer: TurnBuffer,
+    actor_id: str,
+    target_id: str,
+    location_id: str,
+    turn_id: str,
+    rng: random.Random,
+) -> None:
+    """Mid-combat join. Called when an attack lands during an active
+    combat. Adds the actor and the explicit target to the combat's
+    participant roster via CombatParticipantsAdded, plus rolls
+    initiative for whichever ones were not already participants.
+
+    Existing participants are unaffected — no fresh CombatStart, no
+    reset of round counting, no re-roll of existing initiative.
+    Friendly NPCs in the room are still excluded. Dead entities are
+    not added.
+
+    This is the path that breaks the M9 "two simultaneous fights"
+    failure mode where killing one hostile prematurely ended combat
+    and a subsequent attack on a different hostile incorrectly fired
+    a fresh CombatStart (which re-included dead participants in
+    initiative and made round counting inconsistent)."""
+    state = buffer.project()
+    existing = _current_participants_with_staged(buffer)
+
+    new_participants: list[str] = []
+    for pid in (actor_id, target_id):
+        if pid in existing or pid in new_participants:
+            continue
         entity = state.entities.get(pid)
-        dex_mod = 0
-        if entity is not None:
-            raw = entity.attributes.get("dex_mod", 0)
-            if isinstance(raw, int) and not isinstance(raw, bool):
-                dex_mod = raw
-        formula = _format_d20_formula(dex_mod)
-        result = _dice_roll(formula, rng)
-        buffer.stage(
-            DiceRolled(
-                formula=formula,
-                result=result,
-                reason=f"initiative: {pid}",
-            ),
-            dice_cause,
-        )
+        if entity is None:
+            continue
+        # Don't add the dead — they have nothing to do in combat.
+        if entity.attributes.get("status") in config.NEUTRALIZED_STATUSES:
+            continue
+        new_participants.append(pid)
+
+    if not new_participants:
+        return
+
+    transition_cause = EventCause(kind="combat_transition", turn_id=turn_id, player_id=actor_id)
+    dice_cause = EventCause(kind="dice_resolution", turn_id=turn_id, player_id=actor_id)
+    buffer.stage(CombatParticipantsAdded(participants=list(new_participants)), transition_cause)
+    for pid in new_participants:
+        _stage_initiative_roll(buffer, state, pid, rng, dice_cause)
+
+
+def _stage_initiative_roll(
+    buffer: TurnBuffer,
+    state: WorldState,
+    pid: str,
+    rng: random.Random,
+    cause: EventCause,
+) -> None:
+    """Roll 1d20+dex_mod for `pid`; stage the DiceRolled event with
+    the scheduler-required `initiative: <id>` reason format."""
+    entity = state.entities.get(pid)
+    dex_mod = 0
+    if entity is not None:
+        raw = entity.attributes.get("dex_mod", 0)
+        if isinstance(raw, int) and not isinstance(raw, bool):
+            dex_mod = raw
+    formula = _format_d20_formula(dex_mod)
+    result = _dice_roll(formula, rng)
+    buffer.stage(
+        DiceRolled(
+            formula=formula,
+            result=result,
+            reason=f"initiative: {pid}",
+        ),
+        cause,
+    )
+
+
+def _current_participants_with_staged(buffer: TurnBuffer) -> set[str]:
+    """Return the active combat participants, accounting for any
+    CombatStart / CombatParticipantsAdded already staged in this turn
+    (so a turn that fires multiple joins doesn't re-add the same id)."""
+    events = list(buffer._log.events())
+    # Project the buffer's staged payloads onto a synthetic event list
+    # the scheduler can read.
+    next_seq = len(events)
+    for i, (payload, cause) in enumerate(buffer._staged):
+        events.append(Event(
+            seq=next_seq + i, timestamp=0.0, cause=cause, payload=payload,
+        ))
+    cs_idx = scheduler._last_combat_start_idx(events)
+    if cs_idx is None:
+        return set()
+    return set(scheduler._active_participants(events, cs_idx))
 
 
 def _format_d20_formula(mod: int) -> str:

@@ -30,6 +30,8 @@ async def submit_action(
         seed=body.seed,
         enemies=tuple(e.model_dump() for e in body.enemies),
         location=body.location,
+        stat=body.stat,
+        purpose=body.purpose,
     )
 
     result = await orchestrator_process_action(action_input=action_input, db=db)
@@ -93,6 +95,8 @@ async def submit_action_stream(
         seed=body.seed,
         enemies=tuple(e.model_dump() for e in body.enemies),
         location=body.location,
+        stat=body.stat,
+        purpose=body.purpose,
     )
     return StreamingResponse(
         orchestrator_stream(action_input, db),

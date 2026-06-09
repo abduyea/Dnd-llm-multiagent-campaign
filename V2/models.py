@@ -165,6 +165,17 @@ class CombatStart(_PayloadBase):
     participants: list[str]
 
 
+class CombatParticipantsAdded(_PayloadBase):
+    """Mid-combat join. The scheduler reads the union of CombatStart's
+    participants plus every CombatParticipantsAdded since it as the
+    active participant set, so a new hostile or PC can enter the fight
+    without resetting round counting or re-rolling initiative for the
+    existing combatants. No-op on world state."""
+
+    type: Literal["combat_participants_added"] = "combat_participants_added"
+    participants: list[str]
+
+
 class CombatEnd(_PayloadBase):
     """No-op on world state. Scheduler (M5) consumes it later."""
 
@@ -186,6 +197,7 @@ Payload = Annotated[
         PlayerAction,
         SummaryCreated,
         CombatStart,
+        CombatParticipantsAdded,
         CombatEnd,
     ],
     Field(discriminator="type"),
@@ -198,6 +210,7 @@ NOOP_PAYLOAD_TYPES: frozenset[str] = frozenset(
         "player_action",
         "summary_created",
         "combat_start",
+        "combat_participants_added",
         "combat_end",
     }
 )

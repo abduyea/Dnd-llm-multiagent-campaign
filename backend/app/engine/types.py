@@ -132,6 +132,8 @@ class ActionInput:
     seed: int | None = None
     enemies: tuple[dict[str, Any], ...] = ()
     location: str | None = None  # current location label from frontend tracker
+    stat: str | None = None      # skill_check: ability modifier to roll
+    purpose: str | None = None   # skill_check: what the check is for (DC lookup)
 
 
 @dataclass(frozen=True)

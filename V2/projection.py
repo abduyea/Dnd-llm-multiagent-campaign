@@ -19,6 +19,7 @@ from models import (
     AttributeDelta,
     AttributeSet,
     CombatEnd,
+    CombatParticipantsAdded,
     CombatStart,
     DiceRolled,
     DMNarration,
@@ -107,7 +108,7 @@ def apply(state: WorldState, event: Event) -> WorldState:
 
     elif isinstance(
         p,
-        (DiceRolled, DMNarration, PlayerAction, CombatStart, CombatEnd),
+        (DiceRolled, DMNarration, PlayerAction, CombatStart, CombatParticipantsAdded, CombatEnd),
     ):
         # Explicit no-op on world state. These events exist in the log for
         # replay reproducibility (dice) and for later layers (narration,

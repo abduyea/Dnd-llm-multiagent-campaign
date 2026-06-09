@@ -299,21 +299,29 @@ def gather_lore(target_id: str, state: WorldState, include_hidden: bool = False)
     """Fetch the description / lore text for an inspect/look target.
     `include_hidden` toggles whether `hidden_text` properties surface
     (set by examine, not look). Falls back to the entity/item/location
-    name when no richer text is available."""
+    name when no richer text is available.
+
+    Strips `[DEMO: ...]` author annotations so the DM's narration prompt
+    does not see meta-content."""
+    # Local import to avoid a circular import (view_builder imports from
+    # projection which is fine, but importing at module top would cycle
+    # if anyone ever wires view_builder -> dm).
+    from view_builder import strip_demo_annotations
+
     if target_id in state.locations:
-        return state.locations[target_id].description
+        return strip_demo_annotations(state.locations[target_id].description)
     if target_id in state.items:
         item = state.items[target_id]
         props = item.properties
         parts: list[str] = []
         if isinstance(props.get("text"), str) and props.get("readable"):
-            parts.append(props["text"])
+            parts.append(strip_demo_annotations(props["text"]))
         elif isinstance(props.get("description"), str):
-            parts.append(props["description"])
+            parts.append(strip_demo_annotations(props["description"]))
         else:
             parts.append(item.name)
         if include_hidden and isinstance(props.get("hidden_text"), str):
-            parts.append(f"(Hidden detail: {props['hidden_text']})")
+            parts.append(f"(Hidden detail: {strip_demo_annotations(props['hidden_text'])})")
         return " ".join(parts) if parts else item.name
     if target_id in state.entities:
         entity = state.entities[target_id]
@@ -343,6 +351,44 @@ _NARRATION_SYSTEM = (
     "prose; do not introduce any game mechanic the outcomes did not name. "
     "Do not describe actions taken by entities other than the acting "
     "actor in this turn — other combatants will have their own turns.\n\n"
+    "DO NOT ECHO THE ACTOR (CRITICAL): The player has already narrated "
+    "what their character does and says in their own prose for this turn. "
+    "Your narration must NOT repeat, paraphrase, restate, or quote that "
+    "prose back. Your role is to narrate the WORLD'S RESPONSE — the "
+    "environment, the result of dice, what NPCs do in reaction, what "
+    "becomes revealed — never to retell the actor's own actions. If the "
+    "actor's prose already covered the moment fully (e.g. a simple move "
+    "to an empty room) and the outcomes add nothing, keep your beat to a "
+    "single short environmental sentence (what the new room looks like, "
+    "what the actor now sees) rather than re-describing the actor.\n\n"
+    "DO NOT INVENT ENTITIES (CRITICAL): Refer only to characters, items, "
+    "features, and lore that are named in the outcomes, the location/"
+    "entity/item names supplied above, or read aloud from a `readable` "
+    "item's `text`. Do NOT add objects (keys, parchments, glowing runes, "
+    "etc.) that the outcomes do not list. If a container is opened and "
+    "no contents are listed in the outcome, the container was empty — "
+    "do not invent loot. If a target's lore is just its name, describe "
+    "only its outward appearance; do not fabricate inner details.\n\n"
+    "ACTION VOCABULARY IS LITERAL (CRITICAL): The outcomes name the "
+    "exact action that resolved. `examined X` means the actor looked at "
+    "X carefully — they did NOT take it, lift it, grab it, or hold it. "
+    "`looked at X` means the actor's eyes passed over X — same rule. "
+    "Only when the outcome literally contains `picked up` may you "
+    "describe the actor as holding, lifting, taking, grabbing, "
+    "pocketing, or carrying the item. Only when the outcome contains "
+    "`opened` may you describe contents being revealed. Only when the "
+    "outcome contains `moved from X to Y` may you describe the actor "
+    "as in the new room — and even then, do not narrate them taking "
+    "anything from that room unless a pickup outcome also fired this "
+    "turn. A singular world-object (the Heartstone, the Warden's "
+    "throne) does not duplicate: if another PC has already picked it "
+    "up in a prior turn, it is GONE from the pedestal — do not narrate "
+    "a second PC lifting a phantom copy.\n\n"
+    "ACTOR NAMES: Treat each character's display_name as a single name. "
+    "A surname like \"Ironhide\" is part of the character's name, NOT a "
+    "piece of armor or equipment. Do not split names into objects and "
+    "do not narrate damage as being done to a character's armor when the "
+    "outcome says hp.\n\n"
     "SKIPPED outcomes (CRITICAL): When an outcome is marked [SKIPPED], "
     "that action DID NOT HAPPEN mechanically. Your narration MUST convey "
     "failure or no-effect for it — never success, never partial success, "
@@ -386,6 +432,7 @@ def build_turn_narration_prompt(
     DM weaves them into one prose beat."""
     actor = state.entities.get(actor_id)
     actor_name = actor.display_name if actor else actor_id
+    is_npc = actor is not None and actor.kind == "npc"
     location = state.locations.get(location_id)
     location_name = location.name if location else location_id
 
@@ -393,8 +440,32 @@ def build_turn_narration_prompt(
         f"Actor: {actor_name} (id: {actor_id})",
         f"Location: {location_name} (id: {location_id})",
     ]
-    if player_text:
-        lines.append(f"Player prose: {player_text!r}")
+    # For an NPC turn the actor has NO committed prose of their own (NPCs don't
+    # emit a PlayerAction), so the DM must voice them — surface their persona so
+    # the spoken line lands in character.
+    if is_npc:
+        persona = actor.attributes.get("persona", "")
+        if isinstance(persona, str) and persona.strip():
+            lines.append(f"{actor_name}'s persona: {persona.strip()}")
+    # `player_text` is intentionally NOT surfaced to the DM prompt. The
+    # actor's prose has already been committed as a PlayerAction visible
+    # to the players; the DM's job is to narrate the world's response,
+    # not to restate the actor. Including the prose here caused the DM
+    # to paraphrase it back almost verbatim every turn.
+    _ = player_text
+
+    # Ground the DM on where every objective item currently is. Without
+    # this the model has hallucinated wrong locations for the campaign
+    # macguffin — e.g. narrating "the Heartstone embedded in the
+    # Warden's chest" on turns when it's still on its pedestal in the
+    # inner vault. Surfacing the authoritative current location makes
+    # those inventions land as flat contradictions of state the DM was
+    # just told.
+    objective_lines = _render_objective_items(state)
+    if objective_lines:
+        lines.append("")
+        lines.extend(objective_lines)
+
     lines.append("")
     lines.append("Resolved outcomes (in order):")
     for idx, outcome in enumerate(outcomes, start=1):
@@ -405,11 +476,32 @@ def build_turn_narration_prompt(
         lines.append("  (none — actor took no mechanical actions this turn)")
 
     lines.append("")
-    lines.append(
-        "Narrate this turn as a single beat in 1-3 sentences. Echo the "
-        "player's prose where it makes sense; do not invent outcomes "
-        "beyond what is listed."
-    )
+    if is_npc:
+        # NPC turn: the DM IS this NPC's voice — nothing else narrates them.
+        lines.append(
+            f"You are voicing {actor_name}, an NPC taking THEIR OWN turn. "
+            f"{actor_name} is the subject of this beat — narrate what THEY do, "
+            f"and when they speak, give their actual spoken line in double "
+            f"quotes, in character with the persona above. Use the resolved "
+            f"outcomes (a talk outcome contains the words they said). If they "
+            f"took no mechanical action, still have {actor_name} react or speak "
+            f"in character to the party. 1-3 sentences. Do NOT narrate the "
+            f"players' own actions, and do not invent outcomes, objects, or "
+            f"details beyond the list. Treat any key objective item's listed "
+            f"location as fact."
+        )
+    else:
+        lines.append(
+            "Narrate this turn as a single beat in 1-3 sentences. Describe "
+            "ONLY what the world does in response to the actor — environment, "
+            "mechanical results, what becomes visible, how NPCs react. Do not "
+            "retell or paraphrase what the actor said or did; the player has "
+            "already narrated that. Do not invent outcomes, objects, or "
+            "details beyond what the outcomes list. In particular, if a key "
+            "objective item is listed above, treat its location as fact — do "
+            "not describe it as being anywhere else (embedded in an NPC, "
+            "elsewhere in the room, etc.)."
+        )
     lines.append("")
     lines.append(
         "Reply with EXACTLY ONE tag, on its own line:\n"
@@ -420,6 +512,43 @@ def build_turn_narration_prompt(
         {"role": "system", "content": _NARRATION_SYSTEM},
         {"role": "user", "content": user},
     ]
+
+
+def _render_objective_items(state: WorldState) -> list[str]:
+    """Build the "[Key objective items]" grounding block for the DM
+    narration prompt. Each item the seed flags with `type: objective`
+    is reported with its current location — either the room id it sits
+    in, or the entity id that is carrying it (post-pickup). Returns an
+    empty list when the world has no objective items so a campaign
+    without one pays no prompt cost."""
+    objective_items = [
+        item for item in state.items.values()
+        if item.properties.get("type") == "objective"
+    ]
+    if not objective_items:
+        return []
+    lines = [
+        "[Key objective items — authoritative current state]",
+        "These items' locations below are the ground truth. Do not narrate "
+        "them as being anywhere else.",
+    ]
+    for item in objective_items:
+        where: str
+        if item.location_id is not None:
+            loc = state.locations.get(item.location_id)
+            loc_name = loc.name if loc is not None else item.location_id
+            where = f"in {loc_name} (id: {item.location_id})"
+        else:
+            holder = next(
+                (e for e in state.entities.values() if item.item_id in e.inventory),
+                None,
+            )
+            if holder is not None:
+                where = f"carried by {holder.display_name} (id: {holder.entity_id})"
+            else:
+                where = "location unknown"
+        lines.append(f"  - {item.name} (id: {item.item_id}): {where}")
+    return lines
 
 
 def build_npc_turn_prompt(

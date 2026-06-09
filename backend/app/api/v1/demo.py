@@ -29,9 +29,14 @@ _DEMO_CAMPAIGN = {
     ),
 }
 
+# M11 stage 1: aligned to the authored PCs in demo_dungeon_m95.json so the DB
+# roster and the engine entities are identical (clean HP-sync + matching
+# narration vs UI names). Names/scores/hp/ac mirror ent_pc_brakka /
+# ent_pc_sylvi. initiative/speed are display-only metadata (the engine derives
+# initiative from dex), kept as before.
 _DEMO_CHARACTERS = [
     {
-        "character_name": "Brakka Ironjaw",
+        "character_name": "Brakka Ironhide",
         "class_name": "Fighter",
         "race": "Half-Orc",
         "level": 3,
@@ -42,8 +47,8 @@ _DEMO_CHARACTERS = [
         "hp_current": 28,
         "hp_max": 28,
         "armor_class": 16,
-        "strength": 17,
-        "dexterity": 13,
+        "strength": 16,
+        "dexterity": 12,
         "constitution": 15,
         "intelligence": 9,
         "wisdom": 11,
@@ -52,7 +57,7 @@ _DEMO_CHARACTERS = [
         "speed": 30,
     },
     {
-        "character_name": "Sylvi Ashwhisper",
+        "character_name": "Sylvi Quill",
         "class_name": "Rogue",
         "race": "Wood Elf",
         "level": 3,
@@ -61,15 +66,15 @@ _DEMO_CHARACTERS = [
             "She returned alone, barely alive, and refuses to leave until the Heartstone "
             "is destroyed — or she is."
         ),
-        "hp_current": 21,
-        "hp_max": 21,
-        "armor_class": 14,
-        "strength": 10,
-        "dexterity": 17,
-        "constitution": 13,
+        "hp_current": 18,
+        "hp_max": 18,
+        "armor_class": 13,
+        "strength": 9,
+        "dexterity": 16,
+        "constitution": 12,
         "intelligence": 14,
-        "wisdom": 14,
-        "charisma": 12,
+        "wisdom": 13,
+        "charisma": 15,
         "initiative": 3,
         "speed": 35,
     },

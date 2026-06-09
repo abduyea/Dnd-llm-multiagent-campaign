@@ -21,8 +21,11 @@ Per-payload visibility (locked):
 """
 from __future__ import annotations
 
+import re
+from collections import deque
 from dataclasses import dataclass, field
 
+from goals import PartyGoal, completed_goal_ids, select_active_goal
 from models import (
     DiceRolled,
     DMNarration,
@@ -63,10 +66,32 @@ class PlayerView:
     # the only info leaked — entities involved are not (the M4 scoping
     # spirit holds: PCs hear the sound, not the mechanics).
     nearby_commotion: list[tuple[int, str]] = field(default_factory=list)
+    # Anti-fixation: a terse digest of THIS player's own recent turns
+    # (oldest→newest), consecutive identical actions collapsed to "action ×N".
+    # Surfaced so the model can see — and stop — its own repetition, the main
+    # driver of the observed fixation loops (e.g. re-searching the same object).
+    recent_actions: list[str] = field(default_factory=list)
 
 
 class ViewBuilderError(ValueError):
     """Raised when the player doesn't appear in the event log."""
+
+
+# Strips seed-author meta-annotations like
+# "[DEMO: COMBAT - a baseline two-enemy fight ...]" out of any text
+# headed for an LLM prompt. The annotations live in the seed file as a
+# convenience for the demo author but they leak game-design intent into
+# the PC's view, telegraph puzzle solutions, and waste prompt budget.
+# Applied at render time (not load time) so old runs render cleanly too.
+_DEMO_TAG_RE = re.compile(r"\s*\[DEMO:[^\]]*\]\s*")
+
+
+def strip_demo_annotations(text: str) -> str:
+    """Remove `[DEMO: ...]` substrings and collapse the surrounding
+    whitespace. Returns the input unchanged if no annotation is present."""
+    if not isinstance(text, str) or "[DEMO:" not in text:
+        return text
+    return _DEMO_TAG_RE.sub(" ", text).strip()
 
 
 def build_view(events: list[Event], player_id: str) -> PlayerView:
@@ -132,6 +157,9 @@ def build_view(events: list[Event], player_id: str) -> PlayerView:
     state = project(events)
     nearby_commotion = compute_nearby_commotion(events, player_loc, state)
 
+    # Anti-fixation digest of the player's own recent turns.
+    recent_actions = _compute_recent_actions(events, player_id)
+
     return PlayerView(
         player_id=player_id,
         current_location_id=player_loc,
@@ -140,7 +168,59 @@ def build_view(events: list[Event], player_id: str) -> PlayerView:
         visited_locations=visited_locations,
         consecutive_turns_here=consecutive_turns_here,
         nearby_commotion=nearby_commotion,
+        recent_actions=recent_actions,
     )
+
+
+# Priority when one turn carries several mechanical events — the most
+# fixation-relevant action wins the turn's label (a repeated check/attack
+# matters more than the move that ended the turn; bare prose is weakest).
+_ACTION_PRIORITY = {"check": 3, "attack": 3, "move": 2, "spoke": 1}
+
+
+def _compute_recent_actions(
+    events: list[Event], player_id: str, limit: int = 6,
+) -> list[str]:
+    """Terse digest of `player_id`'s own recent turns (oldest→newest, last
+    `limit`), consecutive identical actions collapsed to "action ×N".
+
+    Derived from the player's committed mechanical events (moves, checks,
+    attacks); a turn with only prose reads as "spoke / roleplayed". Per-player
+    by construction (cause.player_id) — no cross-PC scope leak."""
+    turn_order: list[str] = []
+    best: dict[str, tuple[int, str]] = {}  # turn_id -> (priority, label)
+    for e in events:
+        if e.cause.player_id != player_id or not e.cause.turn_id:
+            continue
+        tid = e.cause.turn_id
+        if tid not in best:
+            turn_order.append(tid)
+            best[tid] = (0, "")
+        p = e.payload
+        prio, label = 0, None
+        if isinstance(p, DiceRolled) and (p.reason or "").startswith("check"):
+            target = p.reason.split("->")[-1].strip()
+            m = re.search(r"check\s+'([^']*)'", p.reason)
+            purpose = m.group(1) if (m and m.group(1)) else "check"
+            prio, label = _ACTION_PRIORITY["check"], f"{purpose} check on {target}"
+        elif isinstance(p, DiceRolled) and (p.reason or "").startswith("attack:"):
+            target = p.reason.split("->")[-1].strip()
+            prio, label = _ACTION_PRIORITY["attack"], f"attacked {target}"
+        elif isinstance(p, EntityMoved) and p.entity_id == player_id:
+            prio, label = _ACTION_PRIORITY["move"], f"moved to {p.to_location}"
+        elif isinstance(p, PlayerAction):
+            prio, label = _ACTION_PRIORITY["spoke"], "spoke / roleplayed"
+        if label is not None and prio > best[tid][0]:
+            best[tid] = (prio, label)
+
+    labels = [best[t][1] for t in turn_order if best[t][1]][-limit:]
+    collapsed: list[list] = []
+    for lab in labels:
+        if collapsed and collapsed[-1][0] == lab:
+            collapsed[-1][1] += 1
+        else:
+            collapsed.append([lab, 1])
+    return [f"{lab} ×{n}" if n > 1 else lab for lab, n in collapsed]
 
 
 def _count_consecutive_turns_in_current_room(
@@ -259,6 +339,94 @@ def _graph_distance(
     return None
 
 
+def _bfs_next_hop(
+    state: WorldState,
+    from_id: str,
+    to_id: str,
+    allowed: set[str] | None = None,
+) -> str | None:
+    """The first hop on a shortest path from `from_id` to `to_id` — i.e.
+    the directly-connected room to step toward. When `allowed` is given,
+    only those location ids may appear on the path (including `to_id`), so
+    a visited-only set restricts the search to fully-known territory.
+    Returns None if `to_id` is unreachable under the constraint.
+
+    Connections are explored in sorted order so the chosen hop is
+    deterministic (replay-stable, test-friendly) when several shortest
+    paths tie."""
+    if from_id == to_id:
+        return None
+    if from_id not in state.locations or to_id not in state.locations:
+        return None
+    seen: set[str] = {from_id}
+    # Queue entries carry the first hop taken from `from_id` so we can
+    # report it the moment we reach the target.
+    queue: deque[tuple[str, str | None]] = deque([(from_id, None)])
+    while queue:
+        cur, first = queue.popleft()
+        cur_loc = state.locations.get(cur)
+        if cur_loc is None:
+            continue
+        for nxt in sorted(cur_loc.connections):
+            if nxt in seen:
+                continue
+            if allowed is not None and nxt not in allowed:
+                continue
+            hop = nxt if first is None else first
+            if nxt == to_id:
+                return hop
+            seen.add(nxt)
+            queue.append((nxt, hop))
+    return None
+
+
+def navigation_hint(
+    state: WorldState,
+    current_id: str,
+    target_id: str,
+    visited: list[str] | set[str],
+) -> tuple[str, str | None] | None:
+    """Decide which direction points toward `target_id`, respecting what
+    the player actually knows (their `visited` set). Returns a
+    `(kind, hop)` pair, or None when no hint applies:
+
+      - ("here", None)       — the player is already at the target.
+      - ("known", hop)       — `hop` is a visited room to step toward; the
+                               route there is (at least its next step)
+                               known territory.
+      - ("frontier", hop)    — the way is not yet charted; `hop` is the
+                               unexplored exit on the true path toward the
+                               goal. We reveal only "explore that way", not
+                               what lies behind it.
+
+    Policy ("middle" disclosure): prefer a fully-known route when one
+    exists (never push the party into the unknown if they already know the
+    way). Only when no fully-visited route exists do we consult the true
+    map to pick the single frontier door that actually makes progress."""
+    if target_id not in state.locations:
+        return None
+    if current_id == target_id:
+        return ("here", None)
+    visited_set = set(visited)
+
+    # 1. Fully-known route: the target is somewhere the player has been,
+    #    reachable without stepping through any unexplored room.
+    if target_id in visited_set:
+        hop = _bfs_next_hop(state, current_id, target_id, allowed=visited_set)
+        if hop is not None:
+            return ("known", hop)
+
+    # 2. Uncharted: fall back to the true graph for the next hop toward the
+    #    target. Naming respects fog-of-war — a visited next room is named,
+    #    an unexplored one is only pointed at.
+    hop = _bfs_next_hop(state, current_id, target_id, allowed=None)
+    if hop is None:
+        return None
+    if hop in visited_set:
+        return ("known", hop)
+    return ("frontier", hop)
+
+
 def _compute_visited_locations(events: list[Event], player_id: str) -> list[str]:
     """Walk the log for the player's location history. Returns the
     ordered list of distinct location_ids the player has been in
@@ -284,7 +452,11 @@ def _compute_visited_locations(events: list[Event], player_id: str) -> list[str]
     return order
 
 
-def render_for_prompt(view: PlayerView, state: WorldState) -> str:
+def render_for_prompt(
+    view: PlayerView,
+    state: WorldState,
+    goals: list[PartyGoal] | None = None,
+) -> str:
     """
     Format `view` into a prose block suitable for the player's LLM prompt.
 
@@ -292,36 +464,35 @@ def render_for_prompt(view: PlayerView, state: WorldState) -> str:
     view only carries event references; render time is when we look up
     human-readable details). This split keeps the structural test (on
     `visible_events`) decoupled from text formatting.
+
+    Ordering (top → bottom):
+      1. [Story so far] — older narrative summary
+      2. [Recent events] — newest narrative beats (paired with summary
+         so the LLM reads narrative context as one block)
+      3. [You are in <loc>] + description — current scene
+      4. Present with you — immediate social context
+      5. [You hear from nearby] — nearby commotion cues
+      6. [Your status] + countdowns
+      7. [Party] — other PCs' last-known location + HP
+      8. [Tactical] — urgent cues (wounded + heal item, etc.)
+      9. [Rooms you have explored] + frontier — navigation memory
+     10. [Party objective] — goals + a directional hint toward the active
+         one (only when `goals` is supplied)
+     11. [Affordances] — decision menu (placed near the end so the
+         LLM has the option list fresh when asked "what do you do?")
     """
     lines: list[str] = []
+    me = state.entities.get(view.player_id)
 
     if view.summary is not None:
         lines.append("[Story so far]")
         lines.append(view.summary.text)
         lines.append("")
 
-    location = state.locations.get(view.current_location_id)
-    if location is not None:
-        lines.append(f"[You are in {location.name}.]")
-        lines.append(location.description)
-    else:
-        lines.append(f"[You are in {view.current_location_id}.]")
-
-    me = state.entities.get(view.player_id)
-    others_present = [
-        e for e in state.entities.values()
-        if e.location_id == view.current_location_id and e.entity_id != view.player_id
-    ]
-    if others_present:
-        lines.append("")
-        lines.append("Present with you:")
-        for e in others_present:
-            status = e.attributes.get("status")
-            tag = f" ({status})" if status and status != "hostile" else ""
-            lines.append(f"  - {e.display_name}{tag}")
-
+    # Recent events live with [Story so far] — both are narrative-time
+    # context. Previously this block was placed mid-scene (after
+    # "Present with you"), which broke the temporal flow.
     if view.visible_events:
-        lines.append("")
         lines.append("[Recent events]")
         for event in view.visible_events:
             p = event.payload
@@ -332,6 +503,51 @@ def render_for_prompt(view: PlayerView, state: WorldState) -> str:
             elif isinstance(p, DMNarration):
                 lines.append(f"DM: {p.text}")
             # SummaryCreated already rendered at the top; do not repeat.
+        lines.append("")
+
+    location = state.locations.get(view.current_location_id)
+    if location is not None:
+        lines.append(f"[You are in {location.name}.]")
+        lines.append(strip_demo_annotations(location.description))
+        # Once a room's puzzle is solved (by anyone), the riddle text in the
+        # static description is stale — and an LLM that keeps reading it will
+        # keep "solving" it in circles instead of moving on (observed at the
+        # cinder gate: solved on turn 41, still debating the answer at turn
+        # 50). A loud, positive cue retires the puzzle in the model's view.
+        if _location_puzzle_solved(state, view.current_location_id):
+            lines.append(
+                "[✓ SOLVED — you have already spoken the word and this "
+                "threshold stands open. There is nothing left to puzzle out "
+                "or discuss here; simply move on through to proceed.]"
+            )
+    else:
+        lines.append(f"[You are in {view.current_location_id}.]")
+
+    # Retry-safe steer for a hard gate: if an exit here is sealed behind an
+    # unsolved puzzle, make the solving intent unmissable (placed in-scene so
+    # the model reads it alongside where it is and can't loop on `move`).
+    for steer in _render_sealed_exit_steer(state, view.current_location_id):
+        lines.append(steer)
+
+    others_present = [
+        e for e in state.entities.values()
+        if e.location_id == view.current_location_id and e.entity_id != view.player_id
+    ]
+    if others_present:
+        lines.append("")
+        lines.append("Present with you:")
+        for e in others_present:
+            status = e.attributes.get("status")
+            # Hostile must be loud — it's the most consequential signal
+            # for a turn plan. Friendly/neutral statuses surface too but
+            # less aggressively. Absent status = no marker.
+            if status == "hostile":
+                tag = " — HOSTILE"
+            elif status:
+                tag = f" ({status})"
+            else:
+                tag = ""
+            lines.append(f"  - {e.display_name}{tag}")
 
     # B2 follow-up: nearby combat sound cues. Only the distance + the
     # location id leak across the scoping boundary — not the entities
@@ -380,6 +596,28 @@ def render_for_prompt(view: PlayerView, state: WorldState) -> str:
                 tag = " — EXPIRED" if expired else ""
                 lines.append(f"[Timer: {attr_name} = {int(value)}{tag}]")
 
+    # Party block — other PCs' last-known location and HP. Strict per-PC
+    # scoping (M4) prevents the player from seeing what their teammate
+    # said in a distant room, but a party of adventurers obviously knows
+    # roughly where their friend is and whether they're hurt. Surfacing
+    # this gives the LLM a coordination signal: in M9 runs without it,
+    # Sylvi never went back to help Brakka through a 17-turn skeleton
+    # fight because she had no way to know he was in trouble.
+    party_lines = _render_party_block(view, state)
+    if party_lines:
+        lines.append("")
+        lines.extend(party_lines)
+
+    # Tactical cue — a one-liner pointing the LLM at the most urgent
+    # action it has the resources to take. Currently fires when the
+    # actor is below half HP AND carries an inventory item that can
+    # heal. Cheap to add others (low-HP + adjacent ally, hostile-in-
+    # room + weapon-equipped) as patterns emerge.
+    tactical_lines = _render_tactical_cues(view, state)
+    if tactical_lines:
+        lines.append("")
+        lines.extend(tactical_lines)
+
     # M8.1: spatial memory — surface every visited location + its
     # connections so the player has a discovered-map view of the
     # dungeon instead of having to reconstruct geography each turn
@@ -388,6 +626,28 @@ def render_for_prompt(view: PlayerView, state: WorldState) -> str:
     if visited_block:
         lines.append("")
         lines.append(visited_block)
+
+    # M10: party objective + a single directional navigation hint toward
+    # the active goal. Placed right after the discovered-map block so the
+    # "head toward loc_x" line reads against the map the player just saw,
+    # and just before the affordances so the objective is fresh when the
+    # action menu is presented. Only rendered when goals are supplied.
+    if goals:
+        goal_lines = _render_goals_block(view, state, goals)
+        if goal_lines:
+            lines.append("")
+            lines.extend(goal_lines)
+
+    # Anti-fixation: the player's own recent actions, collapsed (×N), placed
+    # right before the decision menu so the model sees its repetition just as
+    # it chooses. One line, dot-separated — cheap on tokens.
+    if view.recent_actions:
+        lines.append("")
+        lines.append(
+            "[Your recent actions — don't just repeat these; "
+            "a repeated check/talk on the same target rarely reveals more]"
+        )
+        lines.append("  " + " · ".join(view.recent_actions))
 
     # M8: append the affordances block so the player prompt can list
     # exactly which ids are valid for each intent type. Without this,
@@ -399,6 +659,248 @@ def render_for_prompt(view: PlayerView, state: WorldState) -> str:
         lines.append(affordances)
 
     return "\n".join(lines)
+
+
+def _render_party_block(view: PlayerView, state: WorldState) -> list[str]:
+    """Return lines describing every PC other than the viewer — their
+    last-known room (from projected state, not witnessed) and HP.
+
+    Strict per-PC event scoping (M4 G1) is unaffected: we read the
+    current world state, not other PCs' visible_events. The fiction
+    justifies this: party members travel together initially and know
+    roughly where their friend was last seen — even if they split up,
+    "the half-orc went to the guardroom" is not a TTRPG secret. The
+    information also matters mechanically: without it the LLM cannot
+    decide to back up an embattled ally.
+    """
+    others: list = []
+    for entity in state.entities.values():
+        if entity.kind != "pc":
+            continue
+        if entity.entity_id == view.player_id:
+            continue
+        others.append(entity)
+    if not others:
+        return []
+    lines = ["[Party]"]
+    for pc in sorted(others, key=lambda e: e.entity_id):
+        loc_id = pc.location_id
+        loc = state.locations.get(loc_id)
+        loc_name = loc.name if loc is not None else loc_id
+        hp = pc.attributes.get("hp", "?")
+        max_hp = pc.attributes.get("max_hp", "?")
+        status = pc.attributes.get("status")
+        status_tag = ""
+        if status == "dead":
+            status_tag = " — DOWNED"
+        elif status:
+            status_tag = f" ({status})"
+        same_room_marker = " (with you)" if loc_id == view.current_location_id else ""
+        lines.append(
+            f"  {pc.display_name} — in {loc_name} ({loc_id})"
+            f"{same_room_marker}, hp {hp}/{max_hp}{status_tag}"
+        )
+    return lines
+
+
+def _render_tactical_cues(view: PlayerView, state: WorldState) -> list[str]:
+    """One-line situational hints derived from current state. Each cue
+    points at an action whose resources the actor already has, so the
+    LLM does not have to discover the link from raw affordances.
+
+    Currently:
+      - Below half HP + a heal-use item in inventory → name the item.
+
+    Cues here must be HINTS, not commands — phrased to inform rather
+    than to override the player's persona-driven choice.
+    """
+    me = state.entities.get(view.player_id)
+    if me is None:
+        return []
+    hp = me.attributes.get("hp")
+    max_hp = me.attributes.get("max_hp")
+    if not (isinstance(hp, (int, float)) and isinstance(max_hp, (int, float))):
+        return []
+    if max_hp <= 0:
+        return []
+
+    cues: list[str] = []
+    if hp <= max_hp / 2:
+        heal_items: list[str] = []
+        for item_id in (me.inventory or []):
+            it = state.items.get(item_id)
+            if it is None:
+                continue
+            if it.properties.get("use") == "heal":
+                heal_items.append(item_id)
+        if heal_items:
+            items_csv = ", ".join(heal_items)
+            cues.append(
+                f"[Tactical] You are below half HP ({int(hp)}/{int(max_hp)}) "
+                f"and carry a healing item: {items_csv}. Consider "
+                f"<intent type=\"use_item\" item=\"{heal_items[0]}\" "
+                f"target=\"{view.player_id}\"/>."
+            )
+    return cues
+
+
+def _active_countdown_turns(state: WorldState) -> int | None:
+    """The smallest live countdown across the party, or None if no timer is
+    running. A countdown is live when its `countdown_*` attribute is > 0 and
+    its `_expired` companion is not set. Used only for the urgent hint's
+    flavor ("the seal is closing — N turns left")."""
+    best: int | None = None
+    for ent in state.entities.values():
+        for k, v in ent.attributes.items():
+            if not k.startswith("countdown_") or k.endswith("_expired"):
+                continue
+            if isinstance(v, bool) or not isinstance(v, (int, float)):
+                continue
+            if v <= 0 or ent.attributes.get(f"{k}_expired"):
+                continue
+            best = int(v) if best is None else min(best, int(v))
+    return best
+
+
+def _solved_by_party(state: WorldState, target_id: str) -> bool:
+    """True if any entity carries a `solved_<target_id>` marker. Puzzle
+    solves are recorded per-actor (AttributeSet on the solver), but a door
+    that opened for one PC is open for the whole party — so the view treats
+    the solve as party-wide. Without this, a PC who didn't personally speak
+    the word still sees the riddle as unsolved and re-engages it."""
+    marker = f"solved_{target_id}"
+    return any(bool(e.attributes.get(marker)) for e in state.entities.values())
+
+
+def _location_puzzle_solved(state: WorldState, loc_id: str) -> bool:
+    loc = state.locations.get(loc_id)
+    if loc is None or not isinstance(loc.attributes.get("puzzle_answer"), str):
+        return False
+    return _solved_by_party(state, loc_id)
+
+
+def _render_sealed_exit_steer(state: WorldState, loc_id: str) -> list[str]:
+    """Retry-safe steer for a hard gate (runner `gated_exits`). When the current
+    room seals an exit behind an unsolved puzzle, point the model STRAIGHT at the
+    solving intent — a model that keeps trying to `move` (or narrate) through a
+    sealed exit would otherwise stall here. We name the mechanism, not the answer
+    (the answer lives in the riddle + the clues the party has found)."""
+    loc = state.locations.get(loc_id)
+    if loc is None:
+        return []
+    gated = loc.attributes.get("gated_exits")
+    if not isinstance(gated, dict):
+        return []
+    out: list[str] = []
+    for dest, required in gated.items():
+        if not isinstance(required, str) or _solved_by_party(state, required):
+            continue
+        dest_loc = state.locations.get(dest)
+        dest_name = dest_loc.name if dest_loc is not None else dest
+        out.append(
+            f"[⛔ SEALED EXIT — the only way on is to solve the puzzle here]\n"
+            f"The way to {dest_name} ({dest}) is barred. It will NOT open by "
+            f"moving toward it or by narrating the door open — the slab answers "
+            f"only to the spoken word. Speak the answer with the exact intent:\n"
+            f'  <intent type="puzzle_answer" target="{required}" answer="<the word the riddle calls for>"/>'
+        )
+    return out
+
+
+def _format_navigation_hint(
+    state: WorldState,
+    hint: tuple[str, str | None] | None,
+    urgent: bool,
+    countdown: int | None = None,
+) -> str | None:
+    """Render a `navigation_hint` result into one player-facing line, or
+    None if there's nothing to say.
+
+    Tone is urgency-aware (M10): while the active objective is an ordinary
+    milestone the hint is a *soft compass* that explicitly licenses
+    exploring along the way — this is where the dungeon's side content
+    (checks, puzzles, NPCs) lives, and a commanding hint made the party
+    beeline past all of it. Only once the objective is a terminal/escape
+    goal (carrying the macguffin out, a seal closing) does the hint become
+    a firm directive.
+
+    Visited rooms are named (the player has been there); unexplored exits
+    are referred to by id only — the same fog-of-war convention the Frontier
+    block uses."""
+    if hint is None:
+        return None
+    kind, hop = hint
+    loc = state.locations.get(hop) if hop else None
+    name = (loc.name if loc is not None else hop)
+
+    if urgent:
+        timer = (
+            f" The seal is closing — {countdown} turn(s) left."
+            if countdown is not None else ""
+        )
+        if kind == "here":
+            return "↳ ESCAPE: you are at the exit — get clear now."
+        if kind == "known":
+            return f"↳ ESCAPE: head for {name} ({hop}) now.{timer}"
+        if kind == "frontier":
+            return (
+                f"↳ ESCAPE: the way out is the unexplored passage from here "
+                f"({hop}) — take it now.{timer}"
+            )
+        return None
+
+    # Non-urgent: a relaxed compass that invites exploration.
+    if kind == "here":
+        return "↳ You have reached this objective."
+    if kind == "known":
+        return (
+            f"↳ Your objective lies onward, roughly via {name} ({hop}). "
+            f"No rush — nearby rooms may be worth exploring first."
+        )
+    if kind == "frontier":
+        return (
+            f"↳ Your objective lies deeper, past an unexplored passage from "
+            f"here ({hop}). No rush — explore nearby rooms along the way if "
+            f"you wish."
+        )
+    return None
+
+
+def _render_goals_block(
+    view: PlayerView, state: WorldState, goals: list[PartyGoal]
+) -> list[str]:
+    """The per-turn [Party objective] block. Lists every goal's text (a ✓
+    on completed ones) so the party always sees the whole plan, and attaches
+    a single directional navigation hint to the one currently-active goal.
+
+    The active goal and its completion state are *derived* from current
+    world state (see goals.py), so the block reacts to play automatically:
+    grab the Heartstone and the escape goal activates, its route appears,
+    and the earlier goals show as done — no event, no special-casing."""
+    if not goals:
+        return []
+    active = select_active_goal(goals, state)
+    done_ids = completed_goal_ids(goals, state)
+    # Urgency = the active objective is a terminal/escape goal (gated on
+    # carrying something out). This persists through the whole flight, even
+    # after a countdown hits zero — which is what keeps the firm hint up
+    # until the party is actually clear. The countdown, when live, only
+    # adds flavor.
+    urgent = active is not None and active.requires_item_held is not None
+    countdown = _active_countdown_turns(state) if urgent else None
+    out: list[str] = ["[Party objective]"]
+    for g in goals:
+        mark = "  ✓ (done)" if g.id in done_ids else ""
+        out.append(f"  - {g.text}{mark}")
+        if g is active and g.target_location:
+            hint = navigation_hint(
+                state, view.current_location_id, g.target_location,
+                view.visited_locations,
+            )
+            line = _format_navigation_hint(state, hint, urgent, countdown)
+            if line:
+                out.append(f"      {line}")
+    return out
 
 
 def _render_visited_rooms(view: PlayerView, state: WorldState) -> str:
@@ -495,7 +997,8 @@ def _render_affordances(view: PlayerView, state: WorldState) -> str:
 
     out: list[str] = ["[Affordances — what you can do this turn]"]
 
-    # Move
+    # Move — always render. The frontier matters even when there's "only
+    # one connection" because that one connection is the way forward.
     if loc.connections:
         conns = ", ".join(sorted(loc.connections))
         out.append(f"  Move (1/turn): <intent type=\"move\" target=\"<id>\"/>")
@@ -503,7 +1006,7 @@ def _render_affordances(view: PlayerView, state: WorldState) -> str:
     else:
         out.append(f"  Move: (no connections from here)")
 
-    # Look — list everything visible: room, items here, items carried, entities here
+    # Look — always render (the room itself is always lookable).
     look_ids: list[str] = [view.current_location_id]
     look_ids += [e.entity_id for e in other_entities_here]
     look_ids += [i.item_id for i in items_here]
@@ -512,35 +1015,31 @@ def _render_affordances(view: PlayerView, state: WorldState) -> str:
     out.append(f"  Look (free, unlimited): <intent type=\"look\" target=\"<id>\"/>")
     out.append(f"    Visible: {look_csv}")
 
-    # Examine — same id space as look, but it's an action (uses your slot)
-    out.append(f"  Examine (1 action/turn): <intent type=\"examine\" target=\"<id>\"/>")
-    out.append(f"    (Same ids as look; examine is careful inspection — may reveal hidden details.)")
+    # Examine — same id space as look; one terse line, no separate target list.
+    out.append(
+        f"  Examine (1 action/turn): <intent type=\"examine\" target=\"<id>\"/>  "
+        f"(same ids as look; reveals hidden details)"
+    )
 
-    # Attack — hostiles only (suggestion). Always show the tag form so
-    # the model has the syntax in front of it even when no hostiles are
-    # present (consistency across turns matters more than terseness).
-    out.append(f"  Attack (1 action/turn): <intent type=\"attack\" target=\"<id>\"/>")
+    # Below: only render an intent section when it has at least one valid
+    # target in this scene. Otherwise we emit a dense affordances block
+    # full of "(no X here)" lines that dilute the signals the model
+    # actually needs to act on. The model has already seen the full
+    # intent vocabulary in the system suffix.
+
+    # Attack
     if hostile_entities:
         atk_csv = ", ".join(e.entity_id for e in hostile_entities)
+        out.append(f"  Attack (1 action/turn): <intent type=\"attack\" target=\"<id>\"/>")
         out.append(f"    Hostile targets here: {atk_csv}")
-    else:
-        out.append(f"    (no hostile targets present)")
 
-    # Talk — non-hostiles (suggestion). Same: always show syntax.
-    out.append(f"  Talk (free): <intent type=\"talk\" target=\"<id>\">speech</intent>")
+    # Talk
     if non_hostile_entities:
         talk_csv = ", ".join(e.entity_id for e in non_hostile_entities)
+        out.append(f"  Talk (free): <intent type=\"talk\" target=\"<id>\">speech</intent>")
         out.append(f"    Present (non-hostile): {talk_csv}")
-    else:
-        out.append(f"    (no one to speak with here)")
 
-    # M9 follow-up: Pickup — items in this room that can be added to
-    # inventory. Containers and locks are filtered out (see
-    # runner._NON_PICKUPABLE_TYPES); everything else is implicitly
-    # takeable.
-    out.append(
-        f"  Pickup (1 action/turn): <intent type=\"pickup\" target=\"<item_id>\"/>"
-    )
+    # Pickup
     pickupable: list[str] = []
     for itm in items_here:
         if itm.item_id in (actor.inventory or []):
@@ -550,37 +1049,31 @@ def _render_affordances(view: PlayerView, state: WorldState) -> str:
             continue
         pickupable.append(itm.item_id)
     if pickupable:
+        out.append(
+            f"  Pickup (1 action/turn): <intent type=\"pickup\" target=\"<item_id>\"/>"
+        )
         out.append(f"    Items here you can pick up: {', '.join(pickupable)}")
-    else:
-        out.append(f"    (no loose items in this room)")
 
-    # M9 follow-up: Give — atomic one-way transfer to another entity in
-    # the same room. Lists inventory items + present entities so the LLM
-    # has the (item, target) tuple in front of it.
-    out.append(
-        f"  Give (1 action/turn): <intent type=\"give\" item=\"<item_id>\" target=\"<entity_id>\"/>"
-    )
+    # Give — both an inventory item AND a recipient must exist.
     if inventory_items and other_entities_here:
+        out.append(
+            f"  Give (1 action/turn): <intent type=\"give\" "
+            f"item=\"<item_id>\" target=\"<entity_id>\"/>"
+        )
         inv_csv = ", ".join(i.item_id for i in inventory_items)
         tgt_csv = ", ".join(e.entity_id for e in other_entities_here)
         out.append(f"    Your items: {inv_csv}")
         out.append(f"    Recipients here: {tgt_csv}")
-    elif not inventory_items:
-        out.append(f"    (no items in your inventory to give)")
-    else:
-        out.append(f"    (no one here to give items to)")
 
-    # M9 follow-up: Open — containers in this room. Locked containers
-    # show their lock status; the affordance hint reminds the LLM to
-    # pick the lock first.
+    # Open — only when there's a container in scene.
     containers_here = [
         i for i in items_here
         if i.properties.get("type") == "container"
     ]
-    out.append(
-        f"  Open (1 action/turn): <intent type=\"open\" target=\"<container_id>\"/>"
-    )
     if containers_here:
+        out.append(
+            f"  Open (1 action/turn): <intent type=\"open\" target=\"<container_id>\"/>"
+        )
         for c in containers_here:
             locked = bool(c.properties.get("locked"))
             unlocked_marker = bool(actor.attributes.get(f"unlocked_{c.item_id}"))
@@ -592,19 +1085,9 @@ def _render_affordances(view: PlayerView, state: WorldState) -> str:
             else:
                 state_str = "unlocked, ready to open"
             out.append(f"    {c.item_id} ({c.name}) — {state_str}")
-    else:
-        out.append(f"    (no containers in this room)")
 
-    # M9 follow-up: Trade — buy a priced item from a merchant. A
-    # merchant is any NPC in scene who carries at least one item with a
-    # `price` property. Trades pay the listed price out of the actor's
-    # currency attribute (default "coin"); no haggling at the
-    # structural level (NPCs may negotiate in prose).
-    out.append(
-        f"  Trade (1 action/turn): <intent type=\"trade\" "
-        f"want=\"<item_id>\" target=\"<npc_id>\"/>"
-    )
-    traders_here: list[tuple] = []  # (npc, list_of_priced_items)
+    # Trade — only when at least one merchant is present.
+    traders_here: list[tuple] = []
     for e in other_entities_here:
         priced = []
         for item_id in (e.inventory or []):
@@ -617,85 +1100,92 @@ def _render_affordances(view: PlayerView, state: WorldState) -> str:
         if priced:
             traders_here.append((e, priced))
     if traders_here:
+        out.append(
+            f"  Trade (1 action/turn): <intent type=\"trade\" "
+            f"want=\"<item_id>\" target=\"<npc_id>\"/>"
+        )
         for trader, priced_items in traders_here:
             out.append(f"    {trader.entity_id} ({trader.display_name}) sells:")
             for it in priced_items:
                 price = it.properties.get("price")
                 currency = it.properties.get("currency", "coin")
                 out.append(f"      - {it.item_id} ({it.name}) — {price} {currency}")
-    else:
-        out.append(f"    (no merchants here)")
 
-    # M9: Use item — for each inventory item with a `use` property,
-    # surface the set of VALID targets in the current scene. If no valid
-    # targets exist for an item's use kind, say so explicitly. This
-    # prevents the player LLM from trying lockpicks on a non-lockable
-    # object turn after turn.
-    out.append(
-        f"  Use item (1 action/turn): <intent type=\"use_item\" item=\"<id>\" target=\"<id>\"/>"
-    )
-    if inventory_items:
-        for itm in inventory_items:
-            use = itm.properties.get("use")
-            if not isinstance(use, str) or not use:
-                out.append(f"    {itm.item_id} (no usable effect)")
-                continue
-            valid_targets = _valid_use_item_targets(
-                use, view.player_id, other_entities_here, items_here,
-            )
-            if valid_targets:
-                tgts = ", ".join(valid_targets)
-                out.append(f"    {itm.item_id} ({use}) — valid targets here: {tgts}")
-            else:
-                out.append(
-                    f"    {itm.item_id} ({use}) — NO valid target in this scene "
-                    f"(move to a room where {use!r} applies)"
-                )
-    else:
-        out.append(f"    (no items in inventory)")
-
-    # M9: Check — surface DC-bearing targets specifically. The LLM can
-    # still attempt a check on any id, but it'll SKIP if no DC; listing
-    # known DC-bearing targets prevents the dead-end loop.
-    stat_keys = sorted(
-        k for k in actor.attributes.keys()
-        if k.endswith("_mod") and isinstance(actor.attributes[k], int)
-        and not isinstance(actor.attributes[k], bool)
-    )
-    out.append(
-        f"  Check (1 action/turn): <intent type=\"check\" stat=\"<stat>\" "
-        f"target=\"<id>\" purpose=\"<short>\"/>"
-    )
-    if stat_keys:
-        out.append(f"    Stats you have: {', '.join(stat_keys)}")
-    dc_targets = _check_dc_targets(view.current_location_id, other_entities_here, items_here, loc)
-    if dc_targets:
-        out.append(f"    DC-bearing targets here: {', '.join(dc_targets)}")
-    else:
-        out.append(
-            f"    (no targets in this room have an authored DC — "
-            f"a check here will fail with 'no DC')"
+    # Use item — only list items whose `use` actually applies somewhere
+    # in this scene. Items with no `use` property are inert and listing
+    # them as "no usable effect" was pure noise. Items with a `use` but
+    # no valid target in this room are also suppressed (they'll surface
+    # again when the actor moves into a room where they apply).
+    #
+    # Locks the actor has already unlocked are filtered out of the
+    # lockpicking target list — leaving them in invited the LLM into a
+    # "pick the lock again" loop in observed runs.
+    usable_lines: list[str] = []
+    for itm in inventory_items:
+        use = itm.properties.get("use")
+        if not isinstance(use, str) or not use:
+            continue
+        valid_targets = _valid_use_item_targets(
+            use, view.player_id, other_entities_here, items_here,
+            actor_attrs=actor.attributes,
         )
+        if valid_targets:
+            tgts = ", ".join(valid_targets)
+            usable_lines.append(f"    {itm.item_id} ({use}) — valid targets here: {tgts}")
+    if usable_lines:
+        out.append(
+            f"  Use item (1 action/turn): <intent type=\"use_item\" "
+            f"item=\"<id>\" target=\"<id>\"/>"
+        )
+        out.extend(usable_lines)
 
-    # M9: Puzzle answer — only surface targets that actually carry a
-    # puzzle_answer. If none, just show the syntax (puzzles may exist
-    # elsewhere in the dungeon).
+    # Check — only render when there is a DC-bearing target in scene.
+    # Targets the actor has already cleared (locks they've unlocked,
+    # puzzles they've solved) are filtered so the LLM does not see
+    # them as still-checkable.
+    dc_targets = _check_dc_targets(
+        view.current_location_id, other_entities_here, items_here, loc,
+        actor_attrs=actor.attributes,
+    )
+    if dc_targets:
+        stat_keys = sorted(
+            k for k in actor.attributes.keys()
+            if k.endswith("_mod") and isinstance(actor.attributes[k], int)
+            and not isinstance(actor.attributes[k], bool)
+        )
+        out.append(
+            f"  Check (1 action/turn): <intent type=\"check\" stat=\"<stat>\" "
+            f"target=\"<id>\" purpose=\"<short>\"/>"
+        )
+        if stat_keys:
+            out.append(f"    Stats you have: {', '.join(stat_keys)}")
+        out.append(f"    DC-bearing targets here: {', '.join(dc_targets)}")
+
+    # Puzzle answer — only when there's a still-unsolved puzzle target
+    # in scene. A puzzle the actor already solved (solved_<id> on actor)
+    # is filtered out — observed in M9 runs: Sylvi solved
+    # loc_riddle_door once and then re-submitted the same answer 4 more
+    # turns in a row because the affordance kept advertising it.
     puzzle_targets: list[str] = []
-    if isinstance(loc.attributes.get("puzzle_answer"), str):
+    if (
+        isinstance(loc.attributes.get("puzzle_answer"), str)
+        and not _solved_by_party(state, view.current_location_id)
+    ):
         puzzle_targets.append(view.current_location_id)
     for itm in items_here:
-        if isinstance(itm.properties.get("puzzle_answer"), str):
-            puzzle_targets.append(itm.item_id)
-    out.append(
-        f"  Puzzle answer (1 action/turn): <intent type=\"puzzle_answer\" "
-        f"target=\"<id>\" answer=\"<text>\"/>"
-    )
+        if not isinstance(itm.properties.get("puzzle_answer"), str):
+            continue
+        if _solved_by_party(state, itm.item_id):
+            continue
+        puzzle_targets.append(itm.item_id)
     if puzzle_targets:
+        out.append(
+            f"  Puzzle answer (1 action/turn): <intent type=\"puzzle_answer\" "
+            f"target=\"<id>\" answer=\"<text>\"/>"
+        )
         out.append(f"    Puzzle targets here: {', '.join(puzzle_targets)}")
-    else:
-        out.append(f"    (no puzzle targets here)")
 
-    # Wait
+    # Wait — always present.
     out.append(f"  Wait (skip turn): <intent type=\"wait\"/>")
 
     out.append("")
@@ -711,24 +1201,33 @@ def _valid_use_item_targets(
     actor_id: str,
     entities_in_scene: list,
     items_in_scene: list,
+    actor_attrs: dict | None = None,
 ) -> list[str]:
     """Return the ids in the current scene that are valid targets for an
     item with the given `use` kind. Mirrors the runner's dispatch:
       - heal: any entity in scene (including the actor)
-      - lockpicking: items with a `lock_dc` property
+      - lockpicking: items with a `lock_dc` property that the actor
+        has NOT already unlocked (an `unlocked_<id>` attribute on the
+        actor marks a successful prior pick — skipping it here keeps
+        the LLM from re-attempting a lock that is already open).
     Unknown use kinds return [] — the player can still try, but the
     affordance line marks it as no-valid-target.
 
     Note: `pickup_with_seal` is gone — picking up items is now its own
     PickupIntent rendered separately in the affordances block."""
+    attrs = actor_attrs or {}
     if use_kind == "heal":
         return [actor_id] + [e.entity_id for e in entities_in_scene]
     if use_kind == "lockpicking":
-        return [
-            i.item_id for i in items_in_scene
-            if isinstance(i.properties.get("lock_dc"), int)
-            and not isinstance(i.properties.get("lock_dc"), bool)
-        ]
+        out: list[str] = []
+        for i in items_in_scene:
+            dc = i.properties.get("lock_dc")
+            if not (isinstance(dc, int) and not isinstance(dc, bool)):
+                continue
+            if attrs.get(f"unlocked_{i.item_id}"):
+                continue
+            out.append(i.item_id)
+        return out
     return []
 
 
@@ -737,14 +1236,39 @@ def _check_dc_targets(
     entities_in_scene: list,
     items_in_scene: list,
     location,
+    actor_attrs: dict | None = None,
 ) -> list[str]:
     """Return ids of targets in scene that have any DC-shaped attribute
     or property (lock_dc, search_dc, *_dc, or generic dc). The player
     can target anything for a check, but listing the DC-bearing ones
-    prevents the 'check on a non-checkable thing' loop."""
+    prevents the 'check on a non-checkable thing' loop.
+
+    Filters out items whose ONLY DC is `lock_dc` and which the actor
+    has already unlocked — the relevant check has been resolved, so
+    re-listing the lock invites a repeat-pick loop. Items with
+    additional DCs (e.g. search_dc) still surface."""
+    attrs = actor_attrs or {}
+
+    def _item_has_unresolved_dc(props: dict, item_id: str) -> bool:
+        has_any = False
+        has_only_lock = True
+        for k, v in props.items():
+            if not (k.endswith("_dc") or k == "dc"):
+                continue
+            if not (isinstance(v, int) and not isinstance(v, bool)):
+                continue
+            has_any = True
+            if k != "lock_dc":
+                has_only_lock = False
+        if not has_any:
+            return False
+        if has_only_lock and attrs.get(f"unlocked_{item_id}"):
+            return False
+        return True
+
     out: list[str] = []
     for itm in items_in_scene:
-        if _has_dc(itm.properties):
+        if _item_has_unresolved_dc(itm.properties, itm.item_id):
             out.append(itm.item_id)
     for e in entities_in_scene:
         if _has_dc(e.attributes):

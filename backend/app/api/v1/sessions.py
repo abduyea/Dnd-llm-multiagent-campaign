@@ -4,6 +4,7 @@ import json
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -14,10 +15,56 @@ from backend.app.db.models.event_log import EventLog
 from backend.app.db.models.memory import Memory, Summary
 from backend.app.db.models.session import Turn
 from backend.app.models.session import SessionCreate, SessionEnd, SessionResponse
+from backend.app.orchestrator import advance_turn_stream as orchestrator_advance
 from backend.app.orchestrator import end_session as orchestrator_end_session
+from backend.app.orchestrator import get_scene as orchestrator_get_scene
+from backend.app.orchestrator import set_seats as orchestrator_set_seats
 from backend.app.orchestrator import start_session as orchestrator_start_session
 
 router = APIRouter(prefix="/sessions", tags=["sessions"])
+
+
+@router.get("/{session_id}/scene")
+async def get_scene(
+    session_id: str,
+    character_id: str,
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    """M11 stage 2: the character's current scene — location (read-out),
+    connected exits (move options), and present entities (targets)."""
+    result = await orchestrator_get_scene(session_id, character_id, db)
+    if "error" in result:
+        raise HTTPException(status_code=result["status"], detail=result["error"])
+    return result
+
+
+@router.post("/{session_id}/advance")
+async def advance_turn(
+    session_id: str,
+    db: AsyncSession = Depends(get_db),
+) -> StreamingResponse:
+    """M11 stage 3: run the next engine-driven turn (enemy/NPC reaction) and
+    stream it. Events: ``result`` → ``token`` → ``done`` (with ``next_turn``),
+    or a single ``idle`` event when it's a human's turn / nobody is left."""
+    return StreamingResponse(
+        orchestrator_advance(session_id, db),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+@router.post("/{session_id}/seats")
+async def set_seats(
+    session_id: str,
+    assignments: dict[str, str],
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    """M11 stage 3.5: assign per-seat controllers — body is
+    ``{character_id: "ai"|"human"}``. Returns seat config + next_turn."""
+    result = await orchestrator_set_seats(session_id, assignments, db)
+    if "error" in result:
+        raise HTTPException(status_code=result["status"], detail=result["error"])
+    return result
 
 
 async def _get_session_summary(session_id: str, db: AsyncSession) -> str | None:

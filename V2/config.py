@@ -122,23 +122,25 @@ PENDING_NPC_RESPONSE_ATTR = "_pending_response_seq"
 # Number of consecutive empty-intent turns from a single PlayerAgent
 # before the next prompt gets a forward-progress override clause. The
 # escalation tells the player they MUST emit an <intent> tag this turn.
-# Threshold 2 gives one "free pass" turn of pure narration before the
-# system intervenes — the floor at which we treat the LLM as stuck,
-# not deliberately RP-pausing. Observed in M9 runs: a curious-to-a-
-# fault persona can spend 12+ consecutive turns examining the same
-# object without ever emitting a structured intent. The escalation
-# breaks that loop.
-EMPTY_INTENT_ESCALATION_THRESHOLD = 2
+# Threshold 4 gives three "free pass" turns of pure narration before
+# the system intervenes — the floor at which we treat the LLM as
+# stuck, not deliberately RP-pausing. Observed in early M9 runs: a
+# curious-to-a-fault persona can spend 12+ consecutive turns examining
+# the same object without ever emitting a structured intent. Earlier
+# threshold of 2 was too aggressive — it nagged the PC to "do
+# something different" exactly when they should sometimes stay and
+# finish a multi-turn task (puzzle, careful negotiation). 4 is the
+# patience the demo's pace actually wants.
+EMPTY_INTENT_ESCALATION_THRESHOLD = 4
 
 
 # Number of consecutive turns a player has taken in their CURRENT
 # location (with no intervening move) before the next prompt gets a
 # room-stickiness pressure clause referencing the party's goals.
-# Threshold 3 fires on the 4th turn in the same room: enough budget to
-# arrive, establish, take an action, and follow up before the system
-# nudges the PC to move on. Observed M9 failure mode: a PC anchored to
-# an NPC (negotiator persona + scene mystery) emits valid <talk>
-# intents indefinitely. <talk> defeats the empty-intent escalation
-# because it IS an intent; this counter catches the looser "no spatial
-# progress" pattern those repeated talks produce.
-ROOM_STICKINESS_ESCALATION_THRESHOLD = 3
+# Threshold 5 fires on the 6th turn in the same room: enough budget to
+# arrive, establish, take an action, work through a multi-step
+# challenge, and follow up before the system nudges the PC to move
+# on. Earlier threshold of 3 nagged the PC out of rooms where they
+# were mid-task (a fight, a puzzle, a negotiation). 5 still catches
+# the "anchored to one NPC forever" failure mode it was added to fix.
+ROOM_STICKINESS_ESCALATION_THRESHOLD = 5

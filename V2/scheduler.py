@@ -24,7 +24,14 @@ from __future__ import annotations
 from typing import Literal
 
 import config
-from models import AttributeSet, CombatEnd, CombatStart, DiceRolled, Event
+from models import (
+    AttributeSet,
+    CombatEnd,
+    CombatParticipantsAdded,
+    CombatStart,
+    DiceRolled,
+    Event,
+)
 from projection import project
 
 
@@ -195,7 +202,7 @@ def _next_combat_actor(events: list[Event], neutralized: set[str]) -> str | None
     cs_idx = _last_combat_start_idx(events)
     if cs_idx is None:
         return None
-    participants = list(events[cs_idx].payload.participants)
+    participants = _active_participants(events, cs_idx)
     live_participants = [p for p in participants if p not in neutralized]
     if not live_participants:
         return None
@@ -237,7 +244,7 @@ def should_end_combat(events: list[Event]) -> bool:
     cs_idx = _last_combat_start_idx(events)
     if cs_idx is None:
         return False
-    participants = events[cs_idx].payload.participants
+    participants = _active_participants(events, cs_idx)
 
     # Path (a) — all hostile NPCs neutralized
     state = project(events)
@@ -317,6 +324,17 @@ def _disengage_turn_run_length(
     return run
 
 
+def combat_participants(events: list[Event]) -> list[str]:
+    """The active participant set for the current combat (initial roster +
+    every mid-combat joiner), in first-appearance order. Empty if not in
+    combat. Public wrapper so callers (e.g. the M11 web adapter building a
+    combat read-out) need not reach into the private helpers."""
+    cs_idx = _last_combat_start_idx(events)
+    if cs_idx is None:
+        return []
+    return _active_participants(events, cs_idx)
+
+
 def current_round(events: list[Event]) -> int:
     """0 before combat; in combat, the number of FULL rounds completed
     (= the smallest turn count across participants)."""
@@ -325,7 +343,7 @@ def current_round(events: list[Event]) -> int:
     cs_idx = _last_combat_start_idx(events)
     if cs_idx is None:
         return 0
-    participants = events[cs_idx].payload.participants
+    participants = _active_participants(events, cs_idx)
     if not participants:
         return 0
     turns_seen = _turns_since(events, cs_idx, participants)
@@ -342,6 +360,36 @@ def _last_combat_start_idx(events: list[Event]) -> int | None:
         if isinstance(events[i].payload, CombatStart):
             return i
     return None
+
+
+def _active_participants(events: list[Event], cs_idx: int) -> list[str]:
+    """The participant set for the combat that started at `cs_idx`.
+
+    Returns the union of:
+      - CombatStart.participants (the initial roster)
+      - Every CombatParticipantsAdded.participants emitted since cs_idx
+        (mid-combat joiners — new hostiles encountered, PCs walking
+        into the fight, etc.)
+
+    Order is preserved by first-appearance so initiative tie-breaking
+    remains deterministic. Duplicates are dropped silently — a join
+    event re-naming an existing participant is a no-op."""
+    cs_payload = events[cs_idx].payload
+    if not isinstance(cs_payload, CombatStart):
+        return []
+    seen: set[str] = set()
+    out: list[str] = []
+    for pid in cs_payload.participants:
+        if pid not in seen:
+            seen.add(pid)
+            out.append(pid)
+    for e in events[cs_idx + 1:]:
+        if isinstance(e.payload, CombatParticipantsAdded):
+            for pid in e.payload.participants:
+                if pid not in seen:
+                    seen.add(pid)
+                    out.append(pid)
+    return out
 
 
 def _turns_since(

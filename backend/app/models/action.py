@@ -34,6 +34,11 @@ class ActionRequest(BaseModel):
     seed: int | None = None
     enemies: list[EnemyContext] = Field(default_factory=list)
     location: str | None = None
+    # skill_check: which ability modifier to roll (e.g. "wis_mod") and what the
+    # check is for ("insight", "search", …) — the engine derives the DC from the
+    # target's `{purpose}_dc`. Ignored by other action types.
+    stat: str | None = None
+    purpose: str | None = None
 
 
 class DiceRollRequest(BaseModel):
