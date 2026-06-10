@@ -1,3 +1,12 @@
+"""
+Orchestrator — the integration seam.
+
+M11 stage 1: `start_session`, `process_action`, and `process_action_stream`
+now drive **our** event-sourced engine via `engine_glue` (which uses the pure
+`m11_adapter`). The team's `engine/` and `agents/` modules are left in place
+but no longer on the action path (retiring them is a later stage). `end_session`
+keeps its original behaviour (mark completed + summary agent).
+"""
 from __future__ import annotations
 
 import asyncio
@@ -31,6 +40,7 @@ from backend.app.engine.types import (
     TurnDelta,
 )
 from backend.app.engine.validation import validate_action
+from backend.app.orchestrator import engine_glue
 from backend.app.services.ollama_client import _static_fallback, generate_stream
 
 logger = logging.getLogger(__name__)
@@ -359,7 +369,7 @@ async def _prepare_turn(
     )
 
 
-async def process_action(
+async def _legacy_process_action(
     action_input: ActionInput,
     db: AsyncSession,
 ) -> dict[str, Any]:
@@ -465,7 +475,7 @@ async def process_action(
     }
 
 
-async def process_action_stream(
+async def _legacy_process_action_stream(
     action_input: ActionInput,
     db: AsyncSession,
 ) -> AsyncGenerator[str, None]:
@@ -597,50 +607,78 @@ async def process_action_stream(
     except Exception:  # noqa: BLE001
         logger.warning("Memory extraction failed for turn %s", turn_id, exc_info=True)
 
+async def _session_has_engine_world(session_id: str, db: AsyncSession) -> bool:
+    """Return whether this session is backed by the M11 event-sourced engine."""
+    return await engine_glue.load_session_engine(db, session_id) is not None
+
 
 async def start_session(
     campaign_id: str,
     name: str,
     db: AsyncSession,
 ) -> dict[str, Any]:
-    """Create a new active session record and emit a session_start event log entry."""
-    session_id = str(uuid.uuid4())
-    started_at = datetime.now(UTC).isoformat()
-    session = Session(
-        id=session_id,
-        campaign_id=campaign_id,
-        name=name,
-        status="active",
-        turn_count=0,
-        started_at=started_at,
-    )
-    db.add(session)
+    """Create a session; assemble + persist the engine seed for the demo
+    campaign. Delegates to the M11 engine glue."""
+    return await engine_glue.start_session_impl(campaign_id, name, db)
 
-    log = EventLog(
-        event_type="session_start",
-        entity_type="session",
-        entity_id=session_id,
-        data=json.dumps({"campaign_id": campaign_id, "name": name}),
-        agent_id="orchestrator",
-    )
-    db.add(log)
 
-    return {
-        "id": session_id,
-        "campaign_id": campaign_id,
-        "name": name,
-        "status": "active",
-        "started_at": started_at,
-        "turn_count": 0,
-        "status_code": 201,
-    }
+async def process_action(
+    action_input: ActionInput,
+    db: AsyncSession,
+) -> dict[str, Any]:
+    """Run one human action, using M11 engine sessions and legacy sessions."""
+    if not await _session_has_engine_world(action_input.session_id, db):
+        return await _legacy_process_action(action_input, db)
+    return await engine_glue.resolve_human_action(action_input, db)
+
+
+async def process_action_stream(
+    action_input: ActionInput,
+    db: AsyncSession,
+) -> AsyncGenerator[str, None]:
+    """Run one human action and stream SSE chunks: result -> token -> done."""
+    if not await _session_has_engine_world(action_input.session_id, db):
+        async for chunk in _legacy_process_action_stream(action_input, db):
+            yield chunk
+        return
+    async for chunk in engine_glue.process_action_stream_impl(action_input, db):
+        yield chunk
+
+
+async def get_scene(
+    session_id: str,
+    character_id: str,
+    db: AsyncSession,
+) -> dict[str, Any]:
+    """Scene read-out (location + exits + present entities) for a character."""
+    return await engine_glue.get_scene(db, session_id, character_id)
+
+
+async def advance_turn_stream(
+    session_id: str,
+    db: AsyncSession,
+) -> AsyncGenerator[str, None]:
+    """Run the next engine-driven turn (enemy/NPC) and stream it: result →
+    token → done (with next_turn), or an ``idle`` event on a human's turn."""
+    async for chunk in engine_glue.advance_stream_impl(session_id, db):
+        yield chunk
+
+
+async def set_seats(
+    session_id: str,
+    assignments: dict[str, str],
+    db: AsyncSession,
+) -> dict[str, Any]:
+    """Assign per-seat controllers (AI vs human). Powers the AI-seat toggle and
+    all-AI mode."""
+    return await engine_glue.set_seats(db, session_id, assignments)
 
 
 async def end_session(
     session_id: str,
     db: AsyncSession,
 ) -> dict[str, Any]:
-    """Mark session completed, emit event log, and trigger summary generation."""
+    """Mark session completed, emit an audit event, and trigger the summary."""
     result = await db.execute(select(Session).where(Session.id == session_id))
     session = result.scalar_one_or_none()
     if session is None:
@@ -649,14 +687,15 @@ async def end_session(
     session.status = "completed"
     session.ended_at = datetime.now(UTC).isoformat()
 
-    log = EventLog(
-        event_type="session_end",
-        entity_type="session",
-        entity_id=session_id,
-        data=json.dumps({"status": "completed"}),
-        agent_id="orchestrator",
+    db.add(
+        EventLog(
+            event_type="session_end",
+            entity_type="session",
+            entity_id=session_id,
+            data=json.dumps({"status": "completed"}),
+            agent_id="orchestrator",
+        )
     )
-    db.add(log)
 
     try:
         await summarise_session(session_id=session_id, db=db)

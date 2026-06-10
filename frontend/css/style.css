@@ -2550,7 +2550,7 @@ select.dd-input option  { background: var(--dd-surface-3); color: var(--dd-text)
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  max-width: 80px;
+  max-width: 140px;
   line-height: 1.2;
   margin-bottom: 0.15rem;
 }

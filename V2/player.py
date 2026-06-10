@@ -28,6 +28,7 @@ from dataclasses import dataclass, field
 from typing import Callable
 
 import config
+from goals import PartyGoal
 from llm import DEFAULT_MODEL, ChatResult, chat as default_chat
 from models import WorldState
 from ruleset import get_action_economy
@@ -123,7 +124,7 @@ class PlayerAgent:
         model: str = DEFAULT_MODEL,
         chat_fn: ChatFn | None = None,
         retry_cap: int | None = None,
-        goals: list[str] | None = None,
+        goals: list[PartyGoal] | None = None,
     ) -> None:
         self.player_id = player_id
         self.role_description = role_description
@@ -131,7 +132,7 @@ class PlayerAgent:
         self.model = model
         self._chat: ChatFn = chat_fn if chat_fn is not None else default_chat
         self.retry_cap = retry_cap if retry_cap is not None else config.RETRY_CAP
-        self.goals: list[str] = list(goals) if goals else []
+        self.goals: list[PartyGoal] = list(goals) if goals else []
         # Counter for the empty-intent-loop escalation. Increments when a
         # turn resolves "ok" with zero intents; resets when the agent
         # commits to at least one intent. Read at the top of `act()` to
@@ -161,6 +162,14 @@ class PlayerAgent:
                 narration_text, used_fallback, truncated = _process_narration(
                     attempt.raw_narration
                 )
+                # When the player produced valid intents but no narration,
+                # suppress the "(I take no action.)" fallback string —
+                # committing it as the PlayerAction would contradict the
+                # intents the runner is about to execute. Empty text tells
+                # the runner to omit the PlayerAction; the DM's narration
+                # of the intent outcomes carries the beat instead.
+                if used_fallback and attempt.intents:
+                    narration_text = ""
                 result = PlayerTurnResult(
                     chat=chat_result,
                     intents=attempt.intents,
@@ -371,6 +380,16 @@ _PLAYER_SYSTEM_SUFFIX = (
     "in 1-2 sentences). Use only the ids in your affordances list — do "
     "not invent ids. Do not invent dice rolls or game mechanics; the "
     "Dungeon Master resolves all rolls.\n\n"
+    "Prose-and-intent must match: anything your narration describes "
+    "your character mechanically DOING (drinking a potion, picking a "
+    "lock, attacking, opening a chest, picking up an item, moving to a "
+    "room, giving an item) MUST have a matching <intent> tag in the "
+    "same turn. Narrating an action without the matching intent means "
+    "the action does not happen — no dice roll, no inventory change, "
+    "no heal — and you will have wasted the turn pretending. If you "
+    "want the mechanical effect, issue the intent; if you only want "
+    "atmosphere, write atmosphere (\"weighs the vial in her hand\"), "
+    "not action (\"drinks the potion\").\n\n"
     "Forward progress: If your affordances list says there are no valid "
     "targets in this scene for the action you want (e.g. \"no DC-bearing "
     "targets here\", \"no puzzle targets here\", \"NO valid target in "
@@ -386,22 +405,40 @@ def build_player_prompt(
     view: PlayerView,
     state: WorldState,
     role_description: str,
-    goals: list[str] | None = None,
+    goals: list[PartyGoal] | None = None,
     empty_intent_streak: int = 0,
 ) -> list[dict[str, str]]:
-    system = role_description.strip() + _PLAYER_SYSTEM_SUFFIX
+    # System message ordering (top → bottom):
+    #   1. role_description — who the character is (voice, persona)
+    #   2. objective framing — points at the per-turn [Party objective] block
+    #   3. _PLAYER_SYSTEM_SUFFIX — how to respond (format rules)
+    #   4. Conditional escalations (empty-intent, room-stickiness)
+    # The brief reads "I am X. I am here to do Y. Here is how to reply."
+    # which matches how a real player conceptualizes their turn: identity
+    # first, then objective, then mechanics.
+    #
+    # M10: the goal *list* + a live navigation hint now render per-turn in
+    # the user message (via render_for_prompt), because the hint depends on
+    # current state — which room you're in and where you've been. The
+    # system message keeps only a stable framing line that tells the model
+    # where to look and how to weigh it, so we don't duplicate the goal text
+    # (prompt-width matters for the local model) or stamp a now-stale hint
+    # into the immutable system block.
+    system = role_description.strip()
     if goals:
-        bullets = "\n".join(f"  - {g}" for g in goals)
         system += (
             "\n\n[Your party's objective]\n"
-            f"{bullets}\n"
-            "Keep these objectives in mind on every turn. If the current "
-            "scene offers no obvious progress toward them, the next step "
-            "is almost always to MOVE to a connected room — the dungeon "
-            "is larger than what you can see from where you stand, and "
-            "the items / NPCs / challenges that advance the objective "
-            "are somewhere you have not yet been."
+            "Your shared objectives are listed every turn under "
+            "[Party objective] in the scene below, with a navigation hint "
+            "(marked ↳) pointing roughly toward the one that matters right "
+            "now. Keep them in mind, but you are free to explore side rooms, "
+            "talk to the people you meet, and investigate what you find "
+            "along the way — that is often where the dungeon's challenges and "
+            "rewards are. When the hint marks the situation urgent (an "
+            "escape, a closing seal), prioritize the hinted direction and "
+            "move."
         )
+    system += _PLAYER_SYSTEM_SUFFIX
     if empty_intent_streak >= config.EMPTY_INTENT_ESCALATION_THRESHOLD:
         system += (
             "\n\n[Forward-progress override]\n"
@@ -429,7 +466,7 @@ def build_player_prompt(
             "connected room. The thing you need to advance is almost "
             "certainly somewhere else."
         )
-    rendered = render_for_prompt(view, state)
+    rendered = render_for_prompt(view, state, goals=goals)
     user = rendered + "\n\nWhat does your character do this turn?"
     return [
         {"role": "system", "content": system},

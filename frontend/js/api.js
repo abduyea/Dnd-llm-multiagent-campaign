@@ -95,6 +95,10 @@ async function endSession(id) {
 async function getSessionTurns(id) {
   return _fetch(`/sessions/${id}/turns`);
 }
+// M11 stage 2: the character's current scene (location read-out + exits + targets).
+async function getScene(sessionId, characterId) {
+  return _fetch(`/sessions/${sessionId}/scene?character_id=${encodeURIComponent(characterId)}`);
+}
 async function deleteSession(id) {
   const res = await fetch(API_BASE + `/sessions/${id}`, { method: "DELETE" });
   if (!res.ok) {
@@ -122,6 +126,55 @@ async function submitActionStream(sessionId, body, onChunk) {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    let msg = `HTTP ${res.status}`;
+    try { const d = await res.json(); msg = d.detail || d.message || msg; } catch {}
+    throw new Error(msg);
+  }
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const parts = buffer.split("\n\n");
+      buffer = parts.pop() ?? "";
+      for (const part of parts) {
+        for (const line of part.split("\n")) {
+          if (line.startsWith("data: ")) {
+            try { onChunk(JSON.parse(line.slice(6))); } catch {}
+          }
+        }
+      }
+    }
+  } finally {
+    reader.releaseLock();
+  }
+}
+
+// ── Seats (M11 stage 3.5: AI vs human per character) ────
+// assignments = { character_id: "ai" | "human" }
+async function setSeats(sessionId, assignments) {
+  return _fetch(`/sessions/${sessionId}/seats`, {
+    method: "POST",
+    body: JSON.stringify(assignments),
+  });
+}
+
+// ── Advance (M11 stage 3: engine-driven turns) ──────────
+/**
+ * Run the next engine-driven turn (enemy/NPC) and receive SSE events via onChunk.
+ * Events: {type:"result"} → {type:"token"} → {type:"done", next_turn} ,
+ * or a single {type:"idle", next_turn} when it's a human's turn / nobody is left.
+ */
+async function advanceStream(sessionId, onChunk) {
+  const res = await fetch(API_BASE + `/sessions/${sessionId}/advance`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: "{}",
   });
   if (!res.ok) {
     let msg = `HTTP ${res.status}`;

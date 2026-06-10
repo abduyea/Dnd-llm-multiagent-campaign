@@ -58,9 +58,24 @@ def _cors_settings() -> tuple[list[str], bool]:
     return origins, True
 
 
+def _bridge_app_logging() -> None:
+    """Route the app's loggers (e.g. the M11 orchestrator's per-turn / fallback
+    INFO lines) through uvicorn's console handler. Without this, app loggers
+    have no handler under uvicorn and their output is silently dropped — so the
+    server-side "what's happening" trace never appears."""
+    uvicorn_logger = logging.getLogger("uvicorn")
+    app_logger = logging.getLogger("backend.app")
+    if uvicorn_logger.handlers and not app_logger.handlers:
+        for h in uvicorn_logger.handlers:
+            app_logger.addHandler(h)
+    app_logger.setLevel(logging.INFO)
+    app_logger.propagate = False
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Run DB schema creation and idempotent safe migrations on startup."""
+    _bridge_app_logging()
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
         for stmt in _SAFE_MIGRATIONS:

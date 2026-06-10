@@ -1,0 +1,500 @@
+{
+  "ruleset": "dnd5e_lite",
+  "_comment": "M9.5 — The Tomb of the Ember King (Karth-Vol). A 20-room, NON-LINEAR crawl: three routes (the Honor-Guard, the Cistern, the Warrens) fan out from the Mourners' Rotunda and reconverge at the Ashen Undercroft. From the Undercroft a single must-pass spine runs Undercroft -> Warded Threshold (riddle) -> Hall of Cinders (boss) -> Ember Reliquary (the Emberheart). The guaranteed scenario content sits on that shared spine so coverage no longer depends on which route the party picks; the three routes and the side rooms carry optional, hook-rich variety. Structural ids (loc_surface exit, item_heartstone macguffin, ent_warden boss, the two PCs) are reused so the demo's victory + gate logic work unchanged. Connections are authored bidirectionally.",
+
+  "_goals_comment": "Render-time navigation config (never events). The 'escape' goal is gated on holding the Emberheart so its route stays hidden until pickup; the gated/terminal goal also flips the hint to its firm ESCAPE tone.",
+  "party_goals": [
+    {
+      "id": "reach_reliquary",
+      "text": "Descend through the tomb and reach the Ember Reliquary at its heart.",
+      "target_location": "loc_reliquary",
+      "complete_when": {"kind": "location_reached", "location": "loc_reliquary"}
+    },
+    {
+      "id": "take_emberheart",
+      "text": "Take the Emberheart from its pedestal before the seal can close.",
+      "target_location": "loc_reliquary",
+      "complete_when": {"kind": "item_held", "item": "item_heartstone"}
+    },
+    {
+      "id": "escape",
+      "text": "Carry the Emberheart back up to the surface and out of the tomb.",
+      "target_location": "loc_surface",
+      "requires_item_held": "item_heartstone",
+      "complete_when": {"kind": "location_reached", "location": "loc_surface"}
+    }
+  ],
+
+  "locations": [
+    {
+      "id": "loc_surface",
+      "name": "Barrow Hill",
+      "description": "A windswept hill of grey heather above the buried tomb. The toppled lintel of the Ember King's barrow gapes in the slope, and a cart-track runs back toward safer country. This is the way out.",
+      "connections": ["loc_entry"]
+    },
+    {
+      "id": "loc_entry",
+      "name": "The Sunken Stair",
+      "description": "A long stair of cracked basalt descends into the dark. Soot-stained reliefs of a crowned figure line the walls, and a verdigris-green plaque is set beside the arch at the bottom. Cold air breathes up from below. [DEMO: EXPLORATION - safe entry; rewards reading the lore before descending.]",
+      "connections": ["loc_surface", "loc_hub"]
+    },
+    {
+      "id": "loc_hub",
+      "name": "The Mourners' Rotunda",
+      "description": "A round chamber under a domed ceiling of fallen stars. Five dark archways open from its rim, each carved with a different funerary mark, and faded mourners painted on the walls all turn their heads toward the deeper dark. This is where the tomb's paths divide. [DEMO: EXPLORATION + decision - the central fork; the party must choose a route and ideally coordinate who scouts what.]",
+      "connections": ["loc_entry", "loc_gallery", "loc_cistern", "loc_warrens", "loc_offering_hall", "loc_tinkers_alcove", "loc_scriptorium"]
+    },
+
+    {
+      "id": "loc_offering_hall",
+      "name": "The Hall of Offerings",
+      "description": "A quiet side-chapel with a shallow basin of clear water beneath a guttered brazier. Old custom says the tomb's keepers tended the dying here; a soul that kneels and speaks one true regret aloud is mended, body and heart - but the grace comes only once to each supplicant. [DEMO: RESOURCE-MANAGEMENT + roleplay - an optional one-time heal that wants genuine in-character speech.]",
+      "connections": ["loc_hub"]
+    },
+    {
+      "id": "loc_tinkers_alcove",
+      "name": "The Tinker's Alcove",
+      "description": "Improbably, a working stall wedged into a burial niche. Dorn Cogfellow, a wiry tinker with a lantern-staff and a strongbox of oddments, trades with anyone who reaches him: potions, rope, a brass skeleton-key, and rumours of what waits below - for coin or news. [DEMO: NEGOTIATION - a transactional NPC; tests offer/counter-offer and spending coin.]",
+      "connections": ["loc_hub"]
+    },
+    {
+      "id": "loc_scriptorium",
+      "name": "The Ashen Scriptorium",
+      "description": "Rows of charred lecterns, most of their books gone to ash. One brittle codex survives under glass, its last legible page describing the Ember King's funeral rites. [DEMO: EXPLORATION + PUZZLE-CLUE - optional lore that spells out the answer to the Warded Threshold below.]",
+      "connections": ["loc_hub"]
+    },
+
+    {
+      "id": "loc_gallery",
+      "name": "The Gallery of Kings",
+      "description": "A long gallery of nine royal effigies, eight crowned and one crown empty. Their inlaid eyes catch any light. Something about the arrangement seems to record a name for those who look closely. [DEMO: EXPLORATION - route A; a search-rewarding lore room on the way to the barracks.]",
+      "connections": ["loc_hub", "loc_barracks"]
+    },
+    {
+      "id": "loc_barracks",
+      "name": "The Collapsed Barracks",
+      "description": "Bunks of rotten timber and a weapon-rack of rust. Two ash-grey husks in the King's old livery lurch upright the instant a living foot crosses the floor, raising blackened spears. A buckled door at the far end leads deeper; another, half-melted, seals a side armory. [DEMO: COMBAT - route A; a baseline two-enemy fight.]",
+      "connections": ["loc_gallery", "loc_undercroft", "loc_armory_vault"]
+    },
+    {
+      "id": "loc_armory_vault",
+      "name": "The Sealed Armory",
+      "description": "A cramped armory the husks never looted, its door warped shut by old heat. A banded coffer sits bolted to the floor, and a fine ember-steel blade rests in a rack, still keen. [DEMO: RESOURCE-MANAGEMENT - optional reward room behind a stuck door; a locked coffer for the lockpick-inclined.]",
+      "connections": ["loc_barracks"]
+    },
+
+    {
+      "id": "loc_cistern",
+      "name": "The Black Cistern",
+      "description": "A vast flooded reservoir crossed by a single submerged causeway, the black water rising and falling as if it breathes. Crossing wants two sets of hands - one to brace, one to wade - or the current takes the careless. [DEMO: TEAMWORK - route B; a coordination crossing.]",
+      "connections": ["loc_hub", "loc_chime_room", "loc_drowned_oratory"]
+    },
+    {
+      "id": "loc_chime_room",
+      "name": "The Hall of Chimes",
+      "description": "Bronze tubes of every length hang from the ceiling, long since fallen silent; whatever rite once sounded them is forgotten and their mechanism is dead. A worn stair descends from the far side, open and unbarred, toward the undercroft below. [DEMO: ATMOSPHERE - route B connector; no puzzle here, just a quiet passage onward.]",
+      "connections": ["loc_cistern", "loc_undercroft"]
+    },
+    {
+      "id": "loc_drowned_oratory",
+      "name": "The Drowned Oratory",
+      "description": "A side-shrine half-swallowed by the cistern, its pews under green water and its pulpit hung with rotted vestments. A waterlogged reliquary box floats against the rail, just out of easy reach. [DEMO: EXPLORATION - optional dead-end with minor salvage.]",
+      "connections": ["loc_cistern"]
+    },
+
+    {
+      "id": "loc_warrens",
+      "name": "The Bone Warrens",
+      "description": "A low maze of burial niches packed with the tomb's lesser dead. Something pale and patient breathes in the dark between the bones, waiting for a careless light. A quiet party could slip through; a loud one will be found. [DEMO: STEALTH - route C; an avoidable ambusher.]",
+      "connections": ["loc_hub", "loc_catacombs", "loc_ossuary"]
+    },
+    {
+      "id": "loc_catacombs",
+      "name": "The Whispering Catacombs",
+      "description": "A solemn corridor of sealed sarcophagi, each name scratched out by the same hand. The air here is dry and still, and the deeper archway exhales a faint smell of cold ash. [DEMO: EXPLORATION - route C; a quiet connector down to the undercroft.]",
+      "connections": ["loc_warrens", "loc_undercroft"]
+    },
+    {
+      "id": "loc_ossuary",
+      "name": "The Ossuary",
+      "description": "A vault of stacked skulls mortared into the walls. A grave-grub the length of a man heaves among the bones, guarding a verdigrised offering-heap of old coin. [DEMO: COMBAT + RESOURCE - optional fight for an optional reward.]",
+      "connections": ["loc_warrens"]
+    },
+
+    {
+      "id": "loc_undercroft",
+      "name": "The Ashen Undercroft",
+      "description": "A wide grey vault where all three descending ways meet, its floor ankle-deep in cold ash. A great mural covers the far wall, its meaning worn but recoverable to a careful eye. An iron alms-coffer stands bolted by the stair, and a lone living figure tends a small fire - the last Keeper of the tomb. The only way deeper is the warded threshold beyond. [DEMO: CONVERGENCE - the must-pass hub; a search-rewarding mural, a lockable coffer, and a friendly NPC who can help the party prepare for what lies below.]",
+      "connections": ["loc_barracks", "loc_chime_room", "loc_catacombs", "loc_cinder_gate"]
+    },
+    {
+      "id": "loc_cinder_gate",
+      "name": "The Warded Threshold",
+      "description": "A single slab of black glass blocks the stair, warm to the touch. Across it burns a line of cooling script: 'I am the king's last breath, the grey child of fire; I crown the dead and I salt the pyre. Speak my name and pass.' A handprint is pressed into the glass beneath the words. The slab answers only to the spoken word, not to force. [DEMO: PUZZLE - must-pass riddle; the answer ('ash') is recorded in the Scriptorium and the Undercroft mural, and the Keeper knows it.]",
+      "connections": ["loc_undercroft", "loc_boss_hall"],
+      "attributes": {"puzzle_answer": "ash", "gated_exits": {"loc_boss_hall": "loc_cinder_gate"}}
+    },
+    {
+      "id": "loc_boss_hall",
+      "name": "The Hall of Cinders",
+      "description": "A long hall of fluted columns, the air shimmering with heat. At its end, between you and the reliquary door, stands the Cinder Sentinel - a guardian of fused armor and banked coals, kindled awake by your trespass. It is old and half-spent, but it will not let the Emberheart pass while it still burns. [DEMO: BOSS - a weak, must-pass guardian; a winnable fight for a two-PC party.]",
+      "connections": ["loc_cinder_gate", "loc_reliquary", "loc_kings_balcony"]
+    },
+    {
+      "id": "loc_kings_balcony",
+      "name": "The King's Balcony",
+      "description": "A railed overlook above the buried hall, where the Ember King once watched his pyres lit. The view is only of darkness now, but a final relief here names the price of the Heart. [DEMO: EXPLORATION - optional lore dead-end off the boss hall.]",
+      "connections": ["loc_boss_hall"]
+    },
+    {
+      "id": "loc_reliquary",
+      "name": "The Ember Reliquary",
+      "description": "A small, still, red-lit room. On a plain basalt pedestal rests the Emberheart of Karth-Vol - the objective. Lifting it is trivial; but the relief above the door warns that the reliquary seals on a slow count the moment the Heart leaves its rest. [DEMO: CLIMAX - easy to grab, but the escape demands the party move together under a timer.]",
+      "connections": ["loc_boss_hall"]
+    }
+  ],
+
+  "entities": [
+    {
+      "id": "ent_pc_brakka",
+      "display_name": "Brakka Ironhide",
+      "kind": "pc",
+      "location_id": "loc_surface",
+      "attributes": {
+        "hp": 28, "max_hp": 28, "ac": 16, "level": 3, "class": "fighter",
+        "str": 16, "dex": 12, "con": 15, "int": 9, "wis": 11, "cha": 10,
+        "str_mod": 3, "dex_mod": 1, "con_mod": 2, "int_mod": -1, "wis_mod": 0, "cha_mod": 0,
+        "attack_mod": 5, "weapon_damage": "1d8+3", "proficiency": 2, "coin": 10,
+        "persona": "A blunt, loyal half-orc mercenary. Solves problems with force first but is fiercely protective of allies. Speaks plainly."
+      },
+      "inventory": ["item_brakka_axe", "item_brakka_shield", "item_torch_1", "item_brakka_potion"]
+    },
+    {
+      "id": "ent_pc_sylvi",
+      "display_name": "Sylvi Quill",
+      "kind": "pc",
+      "location_id": "loc_surface",
+      "attributes": {
+        "hp": 18, "max_hp": 18, "ac": 13, "level": 3, "class": "rogue",
+        "str": 9, "dex": 16, "con": 12, "int": 14, "wis": 13, "cha": 15,
+        "str_mod": -1, "dex_mod": 3, "con_mod": 1, "int_mod": 2, "wis_mod": 1, "cha_mod": 2,
+        "attack_mod": 5, "weapon_damage": "1d6+3", "proficiency": 2, "coin": 60,
+        "persona": "A quick-witted halfling scout and negotiator. Prefers talking, sneaking, and clever angles over open fights. Curious to a fault."
+      },
+      "inventory": ["item_sylvi_daggers", "item_sylvi_tools"]
+    },
+
+    {
+      "id": "ent_husk_1",
+      "display_name": "Ash Husk",
+      "kind": "npc",
+      "location_id": "loc_barracks",
+      "attributes": {
+        "hp": 8, "max_hp": 8, "ac": 12, "attack_mod": 3, "weapon_damage": "1d6+1", "dex_mod": 0,
+        "status": "hostile", "disposition": "hostile",
+        "tactics": "Attacks the nearest living target on sight. Mindless; no morale, fights to destruction.",
+        "goals": [
+          "Attack any living creature you can see in this room.",
+          "Do not pursue beyond the barracks - your watch ends at its threshold.",
+          "Fight to destruction; you feel no fear and take no morale."
+        ]
+      },
+      "inventory": ["item_husk_spear_1"]
+    },
+    {
+      "id": "ent_husk_2",
+      "display_name": "Ash Husk",
+      "kind": "npc",
+      "location_id": "loc_barracks",
+      "attributes": {
+        "hp": 8, "max_hp": 8, "ac": 12, "attack_mod": 3, "weapon_damage": "1d6+1", "dex_mod": 0,
+        "status": "hostile", "disposition": "hostile",
+        "tactics": "Attacks the nearest living target on sight. Mindless; no morale, fights to destruction.",
+        "goals": [
+          "Attack any living creature you can see in this room.",
+          "Do not pursue beyond the barracks - your watch ends at its threshold.",
+          "Fight to destruction; you feel no fear and take no morale."
+        ]
+      },
+      "inventory": ["item_husk_spear_2"]
+    },
+    {
+      "id": "ent_scavenger",
+      "display_name": "The Pale Gnaw",
+      "kind": "npc",
+      "location_id": "loc_warrens",
+      "attributes": {
+        "hp": 16, "max_hp": 16, "ac": 13, "attack_mod": 4, "weapon_damage": "1d6+2", "dex_mod": 3,
+        "status": "hostile", "disposition": "ambush",
+        "tactics": "A blind cave-ghoul that hunts by sound. Stays hidden among the niches until a loud or lit target comes close, then lunges. A quiet, careful party can pass it entirely; bright light or a successful stealth approach denies it the ambush. Flees into the bones at one quarter HP.",
+        "negotiation_levers": "Not intelligent enough to bargain; driven off by fire or a strong show of force.",
+        "goals": [
+          "Stay hidden in the niches; do not reveal yourself to a quiet, careful party.",
+          "Ambush only a loud, careless, or brightly lit target that comes within reach.",
+          "Attack the nearest such target; flee into the bone-maze if your hp drops below one quarter.",
+          "Do not pursue beyond the Bone Warrens."
+        ]
+      },
+      "inventory": []
+    },
+    {
+      "id": "ent_grub",
+      "display_name": "Tomb Grub",
+      "kind": "npc",
+      "location_id": "loc_ossuary",
+      "attributes": {
+        "hp": 12, "max_hp": 12, "ac": 11, "attack_mod": 3, "weapon_damage": "1d6+1", "dex_mod": 0,
+        "status": "hostile", "disposition": "territorial",
+        "tactics": "A bloated scavenger that guards its coin-heap. Slow and stupid; attacks whoever comes nearest the hoard. Does not leave the ossuary.",
+        "goals": [
+          "Guard the coin-heap in the ossuary; attack anyone who reaches for it or comes near.",
+          "Do not pursue beyond the ossuary.",
+          "Fight until destroyed."
+        ]
+      },
+      "inventory": []
+    },
+    {
+      "id": "ent_npc_dorn",
+      "display_name": "Dorn Cogfellow",
+      "kind": "npc",
+      "location_id": "loc_tinkers_alcove",
+      "attributes": {
+        "hp": 12, "max_hp": 12, "ac": 12, "coin": 0,
+        "disposition": "neutral_transactional",
+        "shop_stock": "Potion of healing (2d4+2 hp) for 50 coin; 50ft rope for 5 coin; a brass skeleton-key for 40 coin; the rumour that the warded threshold below 'answers to a word, not a crowbar' for free.",
+        "negotiation_levers": "Fixed prices for now (haggling not yet supported). Will share the threshold rumour to anyone who chats. Turns hostile only if robbed or threatened.",
+        "persona": "Dry, shrewd, talkative; has outfitted many parties and buried most of them in memory. Fond of unsolicited advice.",
+        "goals": [
+          "Remain in the alcove - do not pursue or wander.",
+          "Offer trades from your shop stock to any party that approaches.",
+          "Freely tell anyone who speaks with you that the warded threshold deeper in 'opens to a spoken word, not to force.'",
+          "Become hostile only if robbed or directly threatened."
+        ]
+      },
+      "inventory": ["item_shop_potion", "item_shop_rope", "item_shop_key"]
+    },
+    {
+      "id": "ent_npc_keeper",
+      "display_name": "Mira Voss",
+      "kind": "npc",
+      "location_id": "loc_undercroft",
+      "attributes": {
+        "hp": 14, "max_hp": 14, "ac": 11, "coin": 0,
+        "disposition": "friendly",
+        "secret": "She is the tomb's last living keeper, bound by old oath to tend it but not to stop honest seekers. She genuinely wants to help and has no hidden malice - rare in this place.",
+        "persona": "Calm, weary, kind. An old woman in soot-grey robes who has waited a long time for company. Speaks gently and gives straight answers.",
+        "negotiation_levers": "Helps freely once she judges the party means no wanton harm. A moment of courtesy, or a successful read of her sincerity (an insight check), opens her up completely.",
+        "insight_dc": 11,
+        "goals": [
+          "Greet any newcomers warmly; you are glad of living company and mean them no harm.",
+          "Warn them that the Cinder Sentinel in the Hall of Cinders is bound to the Emberheart and will not yield while it burns - it must be put down or slipped past.",
+          "Tell anyone who asks, or anyone who is courteous, that the Warded Threshold opens to the spoken word 'ash' - the king's funeral name.",
+          "Offer your Keeper's Draught to heal a wounded adventurer: give item_keeper_draught to whichever PC looks most hurt.",
+          "Do not leave the undercroft; you are too old to climb out, and your place is here."
+        ]
+      },
+      "inventory": ["item_keeper_draught"]
+    },
+    {
+      "id": "ent_warden",
+      "display_name": "The Cinder Sentinel",
+      "kind": "npc",
+      "location_id": "loc_boss_hall",
+      "attributes": {
+        "hp": 26, "max_hp": 26, "ac": 14, "attack_mod": 4, "weapon_damage": "1d8+2", "dex_mod": 0,
+        "status": "hostile", "disposition": "lawful_hostile",
+        "movement_restricted": "bound to the Hall of Cinders by the King's binding",
+        "persona": "An old guardian-construct of fused armor and banked coals. Speaks rarely, in short scorched sentences. Half-spent but dutiful to the last.",
+        "tactics": "Stands between the party and the reliquary door. Warns intruders once to turn back, then attacks if they advance, attack, or try to pass. Focuses the most heavily armored target. Half-spent and slow - a coordinated two-person party can put it down. Bound to the hall and cannot pursue beyond it.",
+        "negotiation_levers": "Almost none - it is too far gone to bargain and its binding compels it. A party that flees back out empty-handed is not pursued, but it will never simply hand over the Heart.",
+        "goals": [
+          "Guard the reliquary door at the end of the Hall of Cinders - this is your binding and your whole remaining purpose.",
+          "Warn intruders once to turn back from the Emberheart.",
+          "Attack any who advance toward the reliquary, attack you, or carry the Heart - focus the most heavily armored target first.",
+          "Remain in the Hall of Cinders; your binding forbids pursuit beyond it."
+        ]
+      },
+      "inventory": []
+    }
+  ],
+
+  "items": [
+    {
+      "id": "item_brakka_axe",
+      "name": "Notched Battleaxe",
+      "location_id": null,
+      "properties": {"type": "weapon", "weapon_damage": "1d8+3", "carried_by": "ent_pc_brakka"}
+    },
+    {
+      "id": "item_brakka_shield",
+      "name": "Iron Shield",
+      "location_id": null,
+      "properties": {"type": "armor", "ac_bonus": 2, "carried_by": "ent_pc_brakka"}
+    },
+    {
+      "id": "item_torch_1",
+      "name": "Torch",
+      "location_id": null,
+      "properties": {"type": "light", "uses_remaining": 6, "carried_by": "ent_pc_brakka"}
+    },
+    {
+      "id": "item_brakka_potion",
+      "name": "Potion of Healing",
+      "location_id": null,
+      "properties": {"type": "consumable", "use": "heal", "heal_formula": "2d4+2", "uses_remaining": 1, "carried_by": "ent_pc_brakka"}
+    },
+    {
+      "id": "item_sylvi_daggers",
+      "name": "Pair of Daggers",
+      "location_id": null,
+      "properties": {"type": "weapon", "weapon_damage": "1d6+3", "finesse": true, "carried_by": "ent_pc_sylvi"}
+    },
+    {
+      "id": "item_sylvi_tools",
+      "name": "Thieves' Tools",
+      "location_id": null,
+      "properties": {"type": "tool", "use": "lockpicking", "carried_by": "ent_pc_sylvi"}
+    },
+
+    {
+      "id": "item_husk_spear_1",
+      "name": "Blackened Spear",
+      "location_id": null,
+      "properties": {"type": "weapon", "weapon_damage": "1d6+1", "carried_by": "ent_husk_1"}
+    },
+    {
+      "id": "item_husk_spear_2",
+      "name": "Blackened Spear",
+      "location_id": null,
+      "properties": {"type": "weapon", "weapon_damage": "1d6+1", "carried_by": "ent_husk_2"}
+    },
+
+    {
+      "id": "item_entry_plaque",
+      "name": "Verdigris Plaque",
+      "location_id": "loc_entry",
+      "properties": {"type": "lore", "readable": true, "text": "Here lies Karth-Vol, the Ember King, crowned in ash and laid upon his own pyre. His Heart was bound below so it could never be carried off, and a Sentinel set to keep it. The Keeper tends the dead; the Threshold tests the living; speak truly and the tomb will let you pass."}
+    },
+    {
+      "id": "item_scriptorium_codex",
+      "name": "The Funeral Codex",
+      "location_id": "loc_scriptorium",
+      "properties": {"type": "lore", "readable": true, "search_dc": 12, "text": "...and on the last day they crowned him not in gold but in ASH, the grey child of the pyre, and named that crown his true and secret name; and the warded glass below was set to open to none but that spoken word."}
+    },
+    {
+      "id": "item_gallery_effigies",
+      "name": "The Nine Effigies",
+      "location_id": "loc_gallery",
+      "properties": {"type": "lore", "readable": true, "search_dc": 13, "text": "Eight kings crowned in stone, and the ninth crown left empty and filled instead with grey ash - a mason's riddle: the King's name is the thing in the empty crown."}
+    },
+    {
+      "id": "item_undercroft_mural",
+      "name": "The Worn Mural",
+      "location_id": "loc_undercroft",
+      "properties": {"type": "lore", "readable": true, "search_dc": 12, "text": "A faded mural of the King's funeral: figures heap grey ash upon his brow while the Heart is lowered into fire below. A line of script beneath, half-gone, reads: 'the Threshold opens to ASH, his crown and his true name.'"}
+    },
+    {
+      "id": "item_alms_coffer",
+      "name": "Iron Alms-Coffer",
+      "location_id": "loc_undercroft",
+      "properties": {"type": "container", "locked": true, "lock_dc": 12, "contents": ["item_alms_coin", "item_alms_potion"], "force_dc": 16, "description": "A bolted offering-coffer by the undercroft stair, its lid held by a single old lock. Pickable with thieves' tools, or forced with effort."}
+    },
+    {
+      "id": "item_alms_coin",
+      "name": "Offering of Coin",
+      "location_id": null,
+      "properties": {"type": "currency", "amount": 75, "inside": "item_alms_coffer"}
+    },
+    {
+      "id": "item_alms_potion",
+      "name": "Potion of Healing",
+      "location_id": null,
+      "properties": {"type": "consumable", "use": "heal", "heal_formula": "2d4+2", "uses_remaining": 1, "inside": "item_alms_coffer"}
+    },
+    {
+      "id": "item_keeper_draught",
+      "name": "Keeper's Draught",
+      "location_id": null,
+      "properties": {"type": "consumable", "use": "heal", "heal_formula": "2d4+4", "uses_remaining": 1, "carried_by": "ent_npc_keeper"}
+    },
+
+    {
+      "id": "item_armory_coffer",
+      "name": "Banded War-Coffer",
+      "location_id": "loc_armory_vault",
+      "properties": {"type": "container", "locked": true, "lock_dc": 14, "contents": ["item_armory_gold"], "force_dc": 18, "description": "A bolted coffer in the sealed armory, contents rattling promisingly."}
+    },
+    {
+      "id": "item_armory_gold",
+      "name": "Soldiers' Pay-Chest",
+      "location_id": null,
+      "properties": {"type": "currency", "amount": 120, "inside": "item_armory_coffer"}
+    },
+    {
+      "id": "item_ember_blade",
+      "name": "Ember-Steel Longsword",
+      "location_id": "loc_armory_vault",
+      "properties": {"type": "weapon", "weapon_damage": "1d8+4", "quality": "fine"}
+    },
+
+    {
+      "id": "item_oratory_box",
+      "name": "Waterlogged Reliquary Box",
+      "location_id": "loc_drowned_oratory",
+      "properties": {"type": "container", "locked": false, "contents": ["item_oratory_silver"], "search_dc": 11, "description": "A small box bobbing at the oratory rail; the latch is swollen but unlocked."}
+    },
+    {
+      "id": "item_oratory_silver",
+      "name": "Tarnished Silver Censer",
+      "location_id": null,
+      "properties": {"type": "currency", "amount": 40, "inside": "item_oratory_box"}
+    },
+
+    {
+      "id": "item_ossuary_hoard",
+      "name": "The Grub's Coin-Heap",
+      "location_id": "loc_ossuary",
+      "properties": {"type": "currency", "amount": 60, "guarded_by": "ent_grub"}
+    },
+
+    {
+      "id": "item_balcony_relief",
+      "name": "The Price Relief",
+      "location_id": "loc_kings_balcony",
+      "properties": {"type": "lore", "readable": true, "text": "A carved scene: the Heart lifted from its rest, and the reliquary doors swinging shut on a slow count of breaths. 'What is taken must be carried out before the tomb forgives the theft.'"}
+    },
+
+    {
+      "id": "item_shop_potion",
+      "name": "Potion of Healing",
+      "location_id": null,
+      "properties": {"type": "consumable", "use": "heal", "heal_formula": "2d4+2", "consumable": true, "price": 50, "currency": "coin", "carried_by": "ent_npc_dorn"}
+    },
+    {
+      "id": "item_shop_rope",
+      "name": "Coil of Rope (50ft)",
+      "location_id": null,
+      "properties": {"type": "gear", "price": 5, "currency": "coin", "carried_by": "ent_npc_dorn"}
+    },
+    {
+      "id": "item_shop_key",
+      "name": "Brass Skeleton-Key",
+      "location_id": null,
+      "properties": {"type": "tool", "use": "lockpicking", "price": 40, "currency": "coin", "carried_by": "ent_npc_dorn", "description": "A crude master-key; works like thieves' tools on simple locks."}
+    },
+
+    {
+      "id": "item_heartstone",
+      "name": "The Emberheart of Karth-Vol",
+      "location_id": "loc_reliquary",
+      "properties": {
+        "type": "objective",
+        "on_pickup": {
+          "start_countdown": {"attribute": "countdown_heartstone_escape", "turns": 8},
+          "seal_location": "loc_reliquary"
+        }
+      }
+    }
+  ]
+}

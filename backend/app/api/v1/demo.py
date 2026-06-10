@@ -29,6 +29,8 @@ _DEMO_CAMPAIGN = {
     ),
 }
 
+# M11 maps demo characters to engine PCs by first name, so the existing DB
+# roster names remain stable while the engine seed can keep its authored names.
 _DEMO_CHARACTERS = [
     {
         "character_name": "Brakka Ironjaw",

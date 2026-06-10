@@ -25,6 +25,8 @@ def _build_action_input(session_id: str, body: ActionRequest) -> ActionInput:
         seed=body.seed,
         enemies=tuple(e.model_dump() for e in body.enemies),
         location=body.location,
+        stat=body.stat,
+        purpose=body.purpose,
     )
 
 

@@ -2141,10 +2141,19 @@ function buildSessionHTML(session, characters, campaignName = "") {
               <input type="hidden" id="action-type" value="roleplay">
             </div>
             <div class="col-sm-3" id="target-group" style="display:none;">
-              <label class="form-label dd-muted mb-1" style="font-size:0.72rem;text-transform:uppercase;letter-spacing:0.06em;">Target (enemy name)</label>
-              <input type="text" class="form-control form-control-sm dd-input" id="action-target-name"
-                list="enemy-datalist" placeholder="Goblin, Dragon…" maxlength="80" autocomplete="off">
-              <datalist id="enemy-datalist"></datalist>
+              <label class="form-label dd-muted mb-1" id="target-label" style="font-size:0.72rem;text-transform:uppercase;letter-spacing:0.06em;">Target</label>
+              <select class="form-select form-select-sm dd-input" id="action-target"></select>
+            </div>
+            <div class="col-sm-3" id="stat-group" style="display:none;">
+              <label class="form-label dd-muted mb-1" style="font-size:0.72rem;text-transform:uppercase;letter-spacing:0.06em;">Ability</label>
+              <select class="form-select form-select-sm dd-input" id="action-stat">
+                <option value="wis_mod">Wisdom</option>
+                <option value="int_mod">Intelligence</option>
+                <option value="cha_mod">Charisma</option>
+                <option value="dex_mod">Dexterity</option>
+                <option value="str_mod">Strength</option>
+                <option value="con_mod">Constitution</option>
+              </select>
             </div>
             <div class="col-12" id="desc-group">
               <label class="form-label dd-muted mb-1" style="font-size:0.72rem;text-transform:uppercase;letter-spacing:0.06em;">Description</label>
@@ -2317,56 +2326,423 @@ function wireSessionEvents(session, characters, root, campaignName = "") {
   charSelect.addEventListener("change", () => highlightActiveChar(charSelect.value));
   if (charSelect.value) highlightActiveChar(charSelect.value);
 
-  // ── Location badge: click to inline-edit ──────────
+  // ── M11 stage 2: the location badge is a READ-OUT of the engine location
+  //    (no more free-text typing), and the action target is populated from
+  //    the engine scene — exits for Move, entities-in-room for Melee/Talk.
   const locationBadge = document.getElementById("location-badge");
   const locationText  = document.getElementById("location-text");
-  const LOCATION_KEY = `location_${session.id}`;
   if (locationBadge) {
-    const savedLoc = localStorage.getItem(LOCATION_KEY);
-    if (savedLoc && savedLoc !== "Unknown Location") {
-      locationText.textContent = savedLoc;
-      locationBadge.classList.add("has-location");
+    locationBadge.title = "Current location (from the engine)";
+    if (locationText) locationText.textContent = "…";
+  }
+
+  let m11Scene = null;
+  const M11_ENTITY_TARGET_TYPES = new Set(["attack_melee", "attack_ranged", "talk"]);
+  const M11_MOVE_TARGET_TYPES   = new Set(["movement", "move"]);
+
+  function m11PopulateTargets() {
+    const tg  = document.getElementById("target-group");
+    const sel = document.getElementById("action-target");
+    const lbl = document.getElementById("target-label");
+    const statGroup = document.getElementById("stat-group");
+    const type = document.getElementById("action-type")?.value || "roleplay";
+    if (!tg || !sel) return;
+    if (statGroup) statGroup.style.display = "none";  // only shown for skill_check
+    let options = [];
+    if (M11_MOVE_TARGET_TYPES.has(type)) {
+      if (lbl) lbl.textContent = "Destination";
+      options = (m11Scene?.exits || []).map(e => ({ value: e.id, label: e.name }));
+    } else if (M11_ENTITY_TARGET_TYPES.has(type)) {
+      if (lbl) lbl.textContent = "Target";
+      options = (m11Scene?.entities_here || []).map(e => ({
+        value: e.id,
+        label: e.name + (e.status === "hostile" ? " — hostile" : ""),
+      }));
+    } else if (type === "skill_check") {
+      // The engine derives the DC from the chosen target's `{purpose}_dc`, so
+      // the option value carries both id and purpose ("id::purpose"); the player
+      // also picks which ability to roll (the Ability selector).
+      if (lbl) lbl.textContent = "Check";
+      options = (m11Scene?.check_targets || []).map(ct => ({
+        value: `${ct.id}::${ct.purpose}`,
+        label: `${ct.name} — ${ct.purpose}`,
+      }));
+      if (statGroup) statGroup.style.display = options.length ? "" : "none";
     } else {
-      locationText.textContent = "Set Location";
+      tg.style.display = "none";  // roleplay/spell/puzzle: no engine target
+      return;
+    }
+    sel.innerHTML = options.length
+      ? options.map(o => `<option value="${esc(o.value)}">${esc(o.label)}</option>`).join("")
+      : `<option value="">(none here)</option>`;
+    tg.style.display = "";
+  }
+
+  // A skill-check verdict chip from the engine's check_result (real DC + roll),
+  // e.g. "PASS · insight (WIS) 17 vs DC 11".
+  function m11CheckChip(cr) {
+    if (!cr) return "";
+    const ability = (cr.stat || "").replace(/_mod$/, "").toUpperCase();
+    const verdict = cr.success ? "PASS" : "FAIL";
+    return `<span class="dice-chip skill-${cr.success ? "pass" : "fail"}">`
+      + `${verdict} · ${esc(cr.purpose || "check")}`
+      + `${ability ? ` (${esc(ability)})` : ""} ${cr.total} vs DC ${cr.dc}</span>`;
+  }
+
+  // ── M11: engine-backed combat panel ────────────────────────────────
+  // The team's encounter/initiative panels were a client-side simulation
+  // (localStorage, manual Roll-All / Next / Auto-Attack). They now mirror the
+  // engine projection: enemy HP, death, initiative order and the round counter
+  // all come from the backend `combat` read-out on every turn. The manual
+  // controls are retired for engine-backed sessions.
+  let m11EngineCombat = false;
+
+  // Set once the party completes every objective. Stops the all-AI advance loop
+  // (it used to keep generating aimless turns after the adventure was won) and
+  // drops a victory banner. The session stays active so the player can end it
+  // for the summary, or play on.
+  let m11Won = false;
+  function m11ShowVictory() {
+    if (m11Won) return;            // once
+    m11Won = true;
+    const feed = document.getElementById("narration-feed");
+    if (feed) {
+      const el = document.createElement("div");
+      el.className = "narration-block";
+      el.innerHTML = `<div class="session-end-banner">
+        <div class="session-end-title"><i class="bi bi-trophy-fill me-2"></i>Objective Complete</div>
+        <p class="banner-summary">The party has achieved its goal. The engine has paused here — end the session to record the tale, or play on.</p>
+      </div>`;
+      feed.append(el);
+      feed.scrollTop = feed.scrollHeight;
+    }
+    document.getElementById("m11-run-ai")?.style.setProperty("display", "none");
+    try { showToast("Objective complete!", "success"); } catch (_) {}
+  }
+
+  function m11HideManualCombatControls() {
+    ["btn-add-enemy", "btn-roll-initiative", "btn-next-turn",
+     "btn-end-combat", "btn-clear-defeated"].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.style.display = "none";
+    });
+    const panel = document.getElementById("enemy-turn-panel");
+    if (panel) panel.style.display = "none";
+  }
+
+  function m11RenderCombat(combat) {
+    if (!combat) return;
+    m11EngineCombat = true;           // engine owns combat from here on
+    m11HideManualCombatControls();
+
+    if (!combat.active) {             // exploration → empty the panels
+      State.enemies = [];
+      State.initiativeOrder = [];
+      State.currentTurnIndex = -1;
+      State.round = 0;
+      renderEnemies();
+      renderInitiativeList();
+      return;
     }
 
-    locationBadge.title = "Click to set current location";
+    State.round = combat.round || 1;
+    State.enemies = (combat.enemies || []).map(e => ({
+      id: e.id, name: e.name,
+      hp: e.dead ? 0 : (e.hp ?? 0), maxHp: e.max_hp ?? e.hp ?? 0,
+      ac: e.ac, attackBonus: e.attack_mod, status: e.status,
+    }));
+    State.initiativeOrder = (combat.order || []).map(o => ({
+      name: o.name, isEnemy: o.kind === "npc",
+      hp: o.dead ? 0 : (o.hp ?? 0), maxHp: o.max_hp ?? o.hp ?? 0,
+      total: o.initiative ?? 0, roll: o.initiative ?? 0, dexMod: 0,
+      entityId: o.id, ac: o.ac, attackBonus: o.attack_mod,
+    }));
+    State.currentTurnIndex = (combat.order || []).findIndex(o => o.is_active);
+    renderEnemies();
+    renderInitiativeList();
+    m11HideManualCombatControls();   // re-hide enemy-turn-panel after render
+  }
 
-    locationBadge.addEventListener("click", () => {
-      if (locationBadge.querySelector("input")) return;
-      const current = locationText.textContent;
-      locationText.style.display = "none";
-      const inp = document.createElement("input");
-      inp.type = "text";
-      inp.value = (current === "Set Location" || current === "Unknown Location") ? "" : current;
-      inp.placeholder = "Enter location…";
-      inp.className = "form-control form-control-sm dd-input";
-      inp.style.cssText = "display:inline-block;width:9rem;font-size:0.72rem;padding:1px 6px;";
-      locationBadge.appendChild(inp);
-      inp.focus(); inp.select();
-      let committed = false;
-      const commit = () => {
-        if (committed) return;
-        committed = true;
-        const val = inp.value.trim();
-        inp.remove();
-        locationText.style.display = "";
-        if (val) {
-          locationText.textContent = val;
-          locationBadge.classList.add("has-location");
-        } else {
-          locationText.textContent = "Set Location";
-          locationBadge.classList.remove("has-location");
-        }
-        try { localStorage.setItem(LOCATION_KEY, val || ""); } catch (_) {}
-      };
-      inp.addEventListener("blur", commit);
-      inp.addEventListener("keydown", e => {
-        if (e.key === "Enter") { e.preventDefault(); commit(); }
-        if (e.key === "Escape") { inp.value = current; commit(); }
+  async function m11RefreshScene() {
+    const cid = charSelect?.value;
+    if (!cid) return;
+    try {
+      m11Scene = await getScene(session.id, cid);
+      if (locationText) {
+        locationText.textContent = m11Scene.location?.name || "Unknown";
+        locationBadge?.classList.add("has-location");
+      }
+      m11PopulateTargets();
+      if (m11Scene.seats) m11RenderSeats(m11Scene.seats, m11Scene.next_turn);
+      m11RenderCombat(m11Scene.combat);
+    } catch (e) {
+      // Non-demo session / no engine world: leave the badge as-is.
+    }
+  }
+
+  // ── M11 stage 3.5: per-seat AI/Human toggles + a "run AI/NPC turns" button
+  //    (all-AI = every seat AI → click Run to watch the engine play itself).
+  function m11EnsureSeatBar() {
+    if (document.getElementById("m11-seat-bar")) return;
+    const composer = document.querySelector(".action-composer");
+    if (!composer) return;
+    const bar = document.createElement("div");
+    bar.id = "m11-seat-bar";
+    bar.style.cssText = "display:flex;gap:0.4rem;align-items:center;flex-wrap:wrap;margin-bottom:0.55rem;";
+    composer.prepend(bar);
+  }
+
+  function m11RenderSeats(seats, nextTurn) {
+    m11EnsureSeatBar();
+    const bar = document.getElementById("m11-seat-bar");
+    if (!bar) return;
+    let html = `<span class="dd-muted" style="font-size:0.7rem;text-transform:uppercase;letter-spacing:0.06em;">Seats:</span>`;
+    (seats || []).forEach(s => {
+      const ai = s.controller === "ai";
+      html += `<button type="button" class="btn btn-sm ${ai ? "btn-info" : "btn-outline-secondary"} m11-seat-toggle"`
+        + ` data-cid="${esc(s.character_id)}" data-ctrl="${ai ? "ai" : "human"}"`
+        + ` style="padding:1px 8px;font-size:0.72rem;">${esc(s.name)}: ${ai ? "AI" : "Human"}</button>`;
+    });
+    const aiTurn = nextTurn && nextTurn.engine_id && !nextTurn.is_human;
+    html += `<button type="button" id="m11-run-ai" class="btn btn-sm btn-warning"`
+      + ` style="padding:1px 8px;font-size:0.72rem;${aiTurn ? "" : "display:none;"}">▶ Run AI / NPC turns</button>`;
+    bar.innerHTML = html;
+    bar.querySelectorAll(".m11-seat-toggle").forEach(btn => {
+      btn.addEventListener("click", async () => {
+        const cid = btn.dataset.cid;
+        const next = btn.dataset.ctrl === "ai" ? "human" : "ai";
+        try {
+          const res = await setSeats(session.id, { [cid]: next });
+          m11RenderSeats(res.seats, res.next_turn);
+          if (res.next_turn && res.next_turn.engine_id && !res.next_turn.is_human) {
+            m11MaybeAutoAdvance(res.next_turn);
+          }
+        } catch (e) { showToast(e.message, "danger"); }
       });
     });
+    const runBtn = document.getElementById("m11-run-ai");
+    if (runBtn) runBtn.addEventListener("click", () => m11MaybeAutoAdvance(nextTurn));
   }
+
+  // ── M11 stage 3: after a human acts, drive the engine's own turns
+  //    (enemy/NPC reactions in initiative order) until it's a human's turn.
+  let m11Advancing = false;
+
+  // Update the top party-health mini-strip pip for a character (the left
+  // sidebar is handled separately). The pip has no id, so it's keyed off the
+  // onclick handler the markup already carries.
+  function m11SyncPartyPip(cid, hpCurrent, hpMax) {
+    const pip = document.querySelector(`.party-health-pip[onclick*="${cid}"]`);
+    if (!pip) return;
+    const fill = pip.querySelector(".php-bar-fill");
+    const hpEl = pip.querySelector(".php-hp");
+    if (fill) {
+      fill.style.width = `${hpPct(hpCurrent, hpMax)}%`;
+      fill.className = `php-bar-fill ${hpFillClass(hpCurrent, hpMax)}`;
+    }
+    if (hpEl) hpEl.textContent = `${hpCurrent}/${hpMax}`;
+  }
+
+  function m11ApplyStateChanges(changes) {
+    if (!changes) return;
+    Object.entries(changes).forEach(([cid, change]) => {
+      m11SyncPartyPip(cid, change.hp_current, change.hp_max);  // top strip
+      const card = document.getElementById(`sidebar-char-${cid}`);
+      if (!card) return;
+      const fill = card.querySelector(".hp-bar-fill");
+      const hpText = card.querySelector(".hp-value");
+      if (fill) {
+        fill.style.width = `${hpPct(change.hp_current, change.hp_max)}%`;
+        fill.className = `hp-bar-fill ${hpFillClass(change.hp_current, change.hp_max)} hp-damaged`;
+        setTimeout(() => fill.classList.remove("hp-damaged"), 600);
+      }
+      if (hpText) hpText.textContent = `${change.hp_current} / ${change.hp_max}`;
+      const condEl = document.getElementById(`sidebar-cond-${cid}`);
+      if (condEl) condEl.innerHTML = conditionBadge(change.hp_current, change.hp_max);
+    });
+  }
+
+  function m11ExtractQuotes(text) {
+    // Pull quoted spans (straight or curly quotes) from an NPC's narration to
+    // surface as spoken dialogue.
+    const out = [];
+    const re = /[“"]([^”"]{2,300}?)[”"]/g;
+    let m;
+    while ((m = re.exec(text || "")) !== null) {
+      const s = m[1].trim();
+      if (s.length >= 2) out.push(s);
+    }
+    return out;
+  }
+
+  function m11RenderEngineTurn(result, narration) {
+    const feed = document.getElementById("narration-feed");
+    if (!feed) return;
+    const name = (result && result.actor_name) || "";
+    const kind = (result && result.actor_kind) || "npc";
+    const label = kind === "npc" ? name : (name ? `${name} (AI)` : "AI");
+    const actorProse = (result && result.actor_prose || "").trim();
+
+    // An AI-controlled hero declares its own turn in character — surface that
+    // prose the same way a human player's typed action renders (speaker — prose)
+    // so the AI seat reads like another player at the table, not silent input
+    // that only the DM speaks for. NPCs commit no prose (actor_prose is ""),
+    // so this block is PC-only; their voice still rides the narration below.
+    if (kind === "pc" && actorProse) {
+      const actEl = document.createElement("div");
+      actEl.className = "narration-block nar-enter";
+      actEl.innerHTML = `<div class="narration-action" data-type="ai_turn">`
+        + `<strong>${esc(label)}</strong> — <em>${esc(actorProse)}</em></div>`;
+      feed.append(actEl);
+    }
+
+    // Hostile NPCs (the Cinder Sentinel, husks, …) get a red theme — same
+    // palette as the interface, but signalling "this one's an enemy". Friendly
+    // NPCs stay gold; AI heroes stay blue.
+    const hostile = kind === "npc" && !!(result && result.actor_hostile);
+    const speakerStyle = hostile ? ' style="color:var(--dd-red);"' : "";
+
+    // Surface quoted NPC speech as a speech bubble (reusing the house style).
+    if (kind === "npc" && name) {
+      m11ExtractQuotes(narration).forEach(speech => {
+        const npcEl = document.createElement("div");
+        npcEl.className = "narration-block nar-enter";
+        npcEl.innerHTML = `<div class="narration-npc"${hostile ? ' style="border-color:rgba(224,64,64,0.45);"' : ""}>`
+          + `<div class="npc-speaker"${speakerStyle}>${esc(name)}</div>`
+          + `<div class="npc-speech">&ldquo;${esc(speech)}&rdquo;</div></div>`;
+        feed.append(npcEl);
+      });
+    }
+
+    let chips = "";
+    if (result && result.attack_result) {
+      const ar = result.attack_result;
+      const cls = ar.is_hit ? "hit" : "miss";
+      chips = `<span class="dice-chip ${cls}">${ar.is_hit ? "HIT" : "MISS"} · roll ${ar.total_roll}</span>`
+        + (ar.is_hit ? `<span class="dice-chip">${ar.damage} dmg</span>` : "");
+    }
+    // An AI hero / NPC skill check gets the same PASS/FAIL chip as a human's.
+    if (result && result.check_result) chips += m11CheckChip(result.check_result);
+
+    // The acting beat: speaker label + narration, tinted by actor kind so engine
+    // turns read as "this NPC/AI hero acted" rather than anonymous DM narration.
+    // Hostile NPC → red, friendly NPC → gold, AI hero → blue.
+    const borderColor = hostile ? "var(--dd-red)"
+      : kind === "npc" ? "var(--dd-gold-muted, #b9912f)" : "rgba(91,168,232,0.6)";
+    const labelStyle = hostile ? "opacity:0.95;color:var(--dd-red);" : "opacity:0.85;";
+    const block = document.createElement("div");
+    block.className = "narration-block nar-enter";
+    block.innerHTML = `<div class="narration-dm m11-engine-turn" style="border-left:2px solid ${borderColor};padding-left:0.6rem;">`
+      + (label ? `<div class="npc-speaker" style="${labelStyle}">${esc(label)}</div>` : "")
+      + (chips ? `<div class="narration-result">${chips}</div>` : "")
+      + `${formatNarration(narration || "")}</div>`;
+    feed.append(block);
+    feed.scrollTop = feed.scrollHeight;
+    if (result) m11ApplyStateChanges(result.state_changes);
+    // Keep the header turn counter moving on engine turns too (it used to
+    // advance only on human submits, so all-AI / auto-advance looked frozen).
+    if (result && typeof result.turn_number === "number") m11BumpTurnCounter(result.turn_number + 1);
+  }
+
+  function m11BumpTurnCounter(n) {
+    const tcEl = document.getElementById("turn-counter");
+    if (!tcEl) return;
+    tcEl.textContent = n;
+    tcEl.classList.remove("turn-bump");
+    void tcEl.offsetWidth;
+    tcEl.classList.add("turn-bump");
+    setTimeout(() => tcEl.classList.remove("turn-bump"), 400);
+  }
+
+  // A "someone is thinking" bubble shown while an engine turn (AI player or NPC)
+  // is being composed in the background — so the table doesn't look frozen
+  // during the LLM round-trip (the DM already had its own thinking indicator).
+  function m11ShowComposing(info) {
+    const feed = document.getElementById("narration-feed");
+    if (!feed || !info) return null;
+    const name = info.actor_name || (info.kind === "npc" ? "An adversary" : "An ally");
+    const label = info.kind === "pc" ? `${name} (AI)` : name;
+    const verb = info.kind === "npc" ? "is acting" : "is deciding their move";
+    const el = document.createElement("div");
+    el.className = "narration-block narration-thinking m11-composing";
+    el.innerHTML = `<div class="dm-thinking">
+      <div class="dm-thinking-dots"><span></span><span></span><span></span></div>
+      <span class="dm-thinking-label">${esc(label)} ${verb}…</span>
+    </div>`;
+    feed.append(el);
+    feed.scrollTop = feed.scrollHeight;
+    return el;
+  }
+  function m11RemoveComposing(el) { if (el && el.parentNode) el.remove(); }
+
+  function m11RunOneAdvance(upcoming) {
+    return new Promise((resolve) => {
+      const composing = m11ShowComposing(upcoming);
+      let result = null, narration = "", nextTurn = null;
+      advanceStream(session.id, (chunk) => {
+        if (chunk.type === "idle") {
+          nextTurn = chunk.next_turn;
+          // Backend refused because the session was ended — stop the loop.
+          if (chunk.ended) session.status = "completed";
+          // Objective met — stop the loop and celebrate.
+          if (chunk.objective_complete) m11ShowVictory();
+          m11RemoveComposing(composing);
+        }
+        else if (chunk.type === "result") { result = chunk; m11RemoveComposing(composing); }
+        else if (chunk.type === "token") narration += chunk.text || "";
+        else if (chunk.type === "done") { nextTurn = chunk.next_turn; m11RenderEngineTurn(result, narration); m11RenderCombat(chunk.combat); if (chunk.objective_complete) m11ShowVictory(); }
+      }).then(() => { m11RemoveComposing(composing); resolve(nextTurn); })
+        .catch(() => { m11RemoveComposing(composing); resolve(null); });
+    });
+  }
+
+  function m11ApplyTurnState(nt) {
+    if (!nt) return;
+    if (nt.mode === "combat") { try { applySessionMode("combat"); } catch (_) {} }
+    else if (nt.mode === "exploration") { try { applySessionMode("exploration"); } catch (_) {} }
+  }
+
+  async function m11MaybeAutoAdvance(nextTurn) {
+    // An ended or won session never advances (a stale loop or a late Run-button
+    // click must not resurrect a finished adventure).
+    if (session.status === "completed" || m11Won) return;
+    m11ApplyTurnState(nextTurn);
+    // Nothing engine-driven to run → just refresh + hand the turn to the human.
+    if (!nextTurn || !nextTurn.engine_id || nextTurn.is_human) {
+      m11AfterTurns(nextTurn);
+      return;
+    }
+    if (m11Advancing) return;
+    m11Advancing = true;
+    try {
+      let nt = nextTurn, guard = 0;
+      while (nt && nt.engine_id && !nt.is_human && guard < 20
+             && session.status !== "completed" && !m11Won) {
+        guard++;
+        nt = await m11RunOneAdvance(nt);  // pass who's up so we can show "X is composing…"
+        m11ApplyTurnState(nt);
+      }
+      m11AfterTurns(nt);
+    } finally {
+      m11Advancing = false;
+    }
+  }
+
+  function m11AfterTurns(nt) {
+    m11RefreshScene();
+    // Auto-select the character whose (human) turn is next, so the player
+    // always sees whose move it is.
+    if (nt && nt.is_human && nt.actor_id && charSelect) {
+      const opt = [...charSelect.options].some(o => o.value === nt.actor_id);
+      if (opt && charSelect.value !== nt.actor_id) {
+        charSelect.value = nt.actor_id;
+        charSelect.dispatchEvent(new Event("change"));
+      }
+    }
+  }
+
+  if (charSelect) charSelect.addEventListener("change", m11RefreshScene);
+  if (session.status === "active") m11RefreshScene();
 
   // ── Session mode cycling ───────────────────────────
   const _MODES = [
@@ -2570,14 +2946,14 @@ function wireSessionEvents(session, characters, root, campaignName = "") {
         <div class="enemy-card ${dead}" id="${e.id}">
           <div class="d-flex align-items-center justify-content-between mb-1">
             <span class="enemy-name">${esc(e.name)}</span>
-            <div class="d-flex gap-1">
+            ${m11EngineCombat ? "" : `<div class="d-flex gap-1">
               <button class="btn btn-xs enemy-dmg-btn" data-id="${e.id}" title="Apply damage">
                 <i class="bi bi-dash-circle"></i>
               </button>
               <button class="btn btn-xs enemy-del-btn" data-id="${e.id}" title="Remove">
                 <i class="bi bi-x"></i>
               </button>
-            </div>
+            </div>`}
           </div>
           <div class="d-flex justify-content-between mb-1">
             <span class="dd-muted" style="font-size:0.65rem;">HP</span>
@@ -2862,8 +3238,9 @@ function wireSessionEvents(session, characters, root, campaignName = "") {
 
     if (roundBadge) { roundBadge.style.display = ""; }
     if (roundNum)   roundNum.textContent = State.round;
-    if (nextBtn)    nextBtn.style.display = "";
-    if (endBtn)     endBtn.style.display = "";
+    // Manual Next/End-combat controls are retired when the engine drives combat.
+    if (nextBtn)    nextBtn.style.display = m11EngineCombat ? "none" : "";
+    if (endBtn)     endBtn.style.display = m11EngineCombat ? "none" : "";
 
     list.innerHTML = State.initiativeOrder.map((r, i) => {
       const isActive = i === State.currentTurnIndex;
@@ -2887,7 +3264,7 @@ function wireSessionEvents(session, characters, root, campaignName = "") {
     }).join("");
 
     const current = State.initiativeOrder[State.currentTurnIndex];
-    if (current && current.isEnemy && current.hp > 0) {
+    if (current && current.isEnemy && current.hp > 0 && !m11EngineCombat) {
       if (enemyPanel) {
         enemyPanel.style.display = "";
         const nameEl   = document.getElementById("enemy-turn-name");
@@ -3504,8 +3881,7 @@ function wireSessionEvents(session, characters, root, campaignName = "") {
     pill.classList.add("active");
     actionTypeInput.value = pill.dataset.type;
     if (actionComposer) actionComposer.dataset.actionType = pill.dataset.type;
-    const isAttack = pill.dataset.type.startsWith("attack_");
-    targetGroup.style.display = isAttack ? "" : "none";
+    m11PopulateTargets();  // M11: target options follow the action type (exits vs entities)
     if (descEl2) {
       descEl2.placeholder = placeholders[pill.dataset.type] || placeholders.roleplay;
       descEl2.focus();
@@ -3547,8 +3923,7 @@ function wireSessionEvents(session, characters, root, campaignName = "") {
         pill.classList.add("active");
         actionTypeInput.value = detected;
         if (actionComposer) actionComposer.dataset.actionType = detected;
-        const isAttack = detected.startsWith("attack_");
-        targetGroup.style.display = isAttack ? "" : "none";
+        m11PopulateTargets();  // M11: keep target options in sync with auto-detected type
         descEl2.placeholder = placeholders[detected] || placeholders.roleplay;
       }
     });
@@ -3764,6 +4139,11 @@ function wireSessionEvents(session, characters, root, campaignName = "") {
 
         document.getElementById("btn-submit-action").disabled = true;
         document.getElementById("action-description").disabled = true;
+        // Halt any AI/NPC auto-advance and retire the seat controls — the
+        // session is over, so the engine must not be driven any further.
+        session.status = "completed";
+        document.getElementById("m11-run-ai")?.style.setProperty("display", "none");
+        document.querySelectorAll(".m11-seat-toggle").forEach(b => { b.disabled = true; });
       } catch (e) {
         endBtn.disabled = false;
         endBtn.innerHTML = `<i class="bi bi-stop-fill me-1"></i>End Session`;
@@ -3852,16 +4232,34 @@ function wireSessionEvents(session, characters, root, campaignName = "") {
     const type    = document.getElementById("action-type").value;
     const descEl2 = document.getElementById("action-description");
     const desc    = descEl2.value.trim();
-    const targetNameEl = document.getElementById("action-target-name");
-    const targetName = targetNameEl ? targetNameEl.value.trim() : "";
+    // M11: the target is a real ENGINE id chosen from the scene dropdown
+    //      (entity for Melee/Ranged/Talk, destination location for Move).
+    const targetGroupEl = document.getElementById("target-group");
+    const targetSel = document.getElementById("action-target");
+    const targetActive = targetGroupEl && targetGroupEl.style.display !== "none" && targetSel;
+    let targetId = targetActive ? (targetSel.value || null) : null;
+    const targetName = targetActive && targetSel.selectedOptions[0]
+      ? targetSel.selectedOptions[0].textContent : "";
+    // skill_check packs "id::purpose" in the option value + rolls a chosen stat.
+    let skillStat = null, skillPurpose = null;
+    if (type === "skill_check" && targetId && targetId.includes("::")) {
+      const [tid, p] = targetId.split("::");
+      targetId = tid;
+      skillPurpose = p;
+      skillStat = document.getElementById("action-stat")?.value || "wis_mod";
+    }
+    const _needsTarget = type.startsWith("attack_") || type === "talk"
+      || type === "movement" || type === "move" || type === "skill_check";
 
     if (!charId) { showToast("Select a character.", "warning"); return; }
     if (!desc)   { showToast("Describe the action.", "warning"); return; }
-    if (type.startsWith("attack_") && !targetName) {
-      showToast("Name your target — e.g. 'Goblin' or 'Dragon'.", "warning"); return;
+    if (_needsTarget && !targetId) {
+      showToast(type === "movement" || type === "move"
+        ? "Pick a destination from the exits." : "Pick a target from the room.", "warning");
+      return;
     }
 
-    const fullDesc = targetName ? `[Target: ${targetName}] ${desc}` : desc;
+    const fullDesc = desc;  // M11: target is a real id now, not free text in the prose
 
     const btn = document.getElementById("btn-submit-action");
     btn.disabled = true;
@@ -3898,16 +4296,15 @@ function wireSessionEvents(session, characters, root, campaignName = "") {
     feed.scrollTop = feed.scrollHeight;
 
     try {
-      const _locationText = document.getElementById("location-text")?.textContent || null;
-      const _location = (_locationText && _locationText !== "Set Location" && _locationText !== "Unknown Location")
-        ? _locationText : null;
       await submitActionStream(session.id, {
         character_id: charId,
         action_type: type,
         description: fullDesc,
-        target_id: null,
+        target_id: targetId,            // M11: real engine id (entity or destination)
         dice_expression: diceExpr,
-        location: _location,
+        location: null,                 // M11: location is now an engine read-out, not input
+        stat: skillStat,                // M11: skill_check — ability modifier to roll
+        purpose: skillPurpose,          // M11: skill_check — DC lookup key
         enemies: State.enemies.map(e => ({
           name: e.name,
           hp: e.hp ?? null,
@@ -3937,7 +4334,6 @@ function wireSessionEvents(session, characters, root, campaignName = "") {
 
           descEl2.value = "";
           descEl2.style.height = "";
-          if (targetNameEl) targetNameEl.value = "";
           const tcEl = document.getElementById("turn-counter");
           if (tcEl) {
             tcEl.textContent = chunk.turn_number + 1;
@@ -3969,13 +4365,10 @@ function wireSessionEvents(session, characters, root, campaignName = "") {
             (chunk.dice_results || []).forEach(dr => {
               chips += `<span class="dice-chip">${esc(dr.expression)}: ${dr.total}</span>`;
             });
-            // Skill check PASS/FAIL chip — parse DC from description and compare total
-            if (chunk.action_type === "skill_check" && chunk.dice_results?.length) {
-              const dcMatch = (fullDesc || "").match(/\b(?:DC|difficulty)\s*(\d+)/i);
-              const dc = dcMatch ? parseInt(dcMatch[1], 10) : 15;
-              const total = chunk.dice_results[0].total;
-              const passed = total >= dc;
-              chips += `<span class="dice-chip skill-${passed ? "pass" : "fail"}">${passed ? "PASS" : "FAIL"} vs DC ${dc}</span>`;
+            // Skill check PASS/FAIL chip — engine-derived (real DC + roll), not
+            // a guess parsed from the description.
+            if (chunk.check_result) {
+              chips += m11CheckChip(chunk.check_result);
             }
             if (chips) {
               resultEl.innerHTML = `<div class="narration-result">${chips}</div>`;
@@ -3997,6 +4390,7 @@ function wireSessionEvents(session, characters, root, campaignName = "") {
 
           if (chunk.state_changes && Object.keys(chunk.state_changes).length) {
             Object.entries(chunk.state_changes).forEach(([cid, change]) => {
+              m11SyncPartyPip(cid, change.hp_current, change.hp_max);  // top strip
               const card = document.getElementById(`sidebar-char-${cid}`);
               if (!card) return;
               const fill = card.querySelector(".hp-bar-fill");
@@ -4017,16 +4411,25 @@ function wireSessionEvents(session, characters, root, campaignName = "") {
           _tlEntry = appendTurnLog(chunk, charId, fullDesc);
 
           if (type.startsWith("attack_") && chunk.attack_result) {
-            if (targetName) {
-              const enemy = ensureEnemy(targetName);
-              if (chunk.attack_result.is_hit && chunk.attack_result.damage > 0) {
-                damageEnemy(enemy.id, chunk.attack_result.damage);
-                showToast(`${chunk.attack_result.damage} dmg → ${targetName}`, "info");
-              } else if (!chunk.attack_result.is_hit) {
+            const ar = chunk.attack_result;
+            if (m11EngineCombat) {
+              // Engine-backed: enemy HP comes from chunk.combat (rendered on
+              // `done`). Just give the player a hit/miss toast for feedback.
+              if (targetName && ar.is_hit && ar.damage > 0) {
+                showToast(`${ar.damage} dmg → ${targetName}`, "info");
+              } else if (targetName && !ar.is_hit) {
                 showToast(`Miss! ${targetName} evades the blow.`, "secondary");
               }
-            } else if (chunk.attack_result.is_hit) {
-              offerDamageToEnemy(chunk.attack_result.damage);
+            } else if (targetName) {
+              const enemy = ensureEnemy(targetName);
+              if (ar.is_hit && ar.damage > 0) {
+                damageEnemy(enemy.id, ar.damage);
+                showToast(`${ar.damage} dmg → ${targetName}`, "info");
+              } else if (!ar.is_hit) {
+                showToast(`Miss! ${targetName} evades the blow.`, "secondary");
+              }
+            } else if (ar.is_hit) {
+              offerDamageToEnemy(ar.damage);
             }
             refreshSidebarHP(session.campaign_id);
           }
@@ -4043,6 +4446,9 @@ function wireSessionEvents(session, characters, root, campaignName = "") {
             streamDiv.classList.remove("narration-streaming");
             streamDiv.innerHTML = formatNarration(chunk.narration || fullNarration);
           }
+          m11RenderCombat(chunk.combat);         // M11: engine-backed enemy HP / initiative / round
+          if (chunk.objective_complete) m11ShowVictory();  // M11: adventure won
+          m11MaybeAutoAdvance(chunk.next_turn);  // M11: run engine turns (enemy/NPC), then hand back to the human
           updateTurnLogNarration(_tlEntry, chunk.narration || fullNarration);
           if (_tlEntry && chunk.npc_responses?.length) {
             updateTurnLogNpcResponses(_tlEntry, chunk.npc_responses);
@@ -4128,12 +4534,8 @@ function wireSessionEvents(session, characters, root, campaignName = "") {
       (result.dice_results || []).forEach(dr => {
         chips += `<span class="dice-chip">${esc(dr.expression)}: ${dr.total}</span>`;
       });
-      if (result.action_type === "skill_check" && result.dice_results?.length) {
-        const dcMatch = (desc || "").match(/\b(?:DC|difficulty)\s*(\d+)/i);
-        const dc = dcMatch ? parseInt(dcMatch[1], 10) : 15;
-        const total = result.dice_results[0].total;
-        const passed = total >= dc;
-        chips += `<span class="dice-chip skill-${passed ? "pass" : "fail"}">${passed ? "PASS" : "FAIL"} vs DC ${dc}</span>`;
+      if (result.check_result) {
+        chips += m11CheckChip(result.check_result);
       }
       if (chips) {
         resultEl.innerHTML = `<div class="narration-result">${chips}</div>`;
