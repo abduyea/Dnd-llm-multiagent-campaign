@@ -98,8 +98,12 @@ MAX_INTENTS_PER_TURN = 6
 
 # Statuses that count as "neutralized" for combat-end purposes and for
 # the scheduler's dead-PC skip. M5 used "dead" only; M9 extends to the
-# full set, matching real TTRPG fleeing/surrender semantics.
-NEUTRALIZED_STATUSES = frozenset({"dead", "fled", "knocked_out", "surrender"})
+# full set, matching real TTRPG fleeing/surrender semantics. M12 adds
+# "stable" — a PC who has stabilized at 0 HP is out of the fight (no more
+# death saves to roll), so the scheduler skips them. Note "unconscious" is
+# deliberately NOT here: a dying PC must keep being scheduled so the runner
+# can roll their death saves each turn.
+NEUTRALIZED_STATUSES = frozenset({"dead", "fled", "knocked_out", "surrender", "stable"})
 
 
 # How many consecutive turns must pass with no two combat participants

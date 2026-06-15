@@ -18,6 +18,8 @@ under a top-level `party_goals` array. Each goal:
       "requires_item_held": "item_heartstone",    # optional activation gate
       "complete_when": {"kind": "location_reached", "location": "loc_surface"}
       #   or            {"kind": "item_held", "item": "item_heartstone"}
+      #   or            {"kind": "item_held_at",                       # carry it OUT
+      #                  "item": "item_heartstone", "location": "loc_surface"}
     }
 
   - `target_location` is what the navigation hint points toward. A goal
@@ -29,8 +31,10 @@ under a top-level `party_goals` array. Each goal:
     in declared order becomes active.
 
 The condition vocabulary is deliberately small and closed (location_reached
-/ item_held). A generator only has to emit those two shapes; richer
-predicates are a later, deliberate extension.
+/ item_held / item_held_at). `item_held_at` is the "carry it OUT" predicate:
+it completes only when the SAME PC both holds the item and stands at the
+location — distinct from a loose `location_reached` that any empty-handed PC
+could satisfy while the relic sits in someone else's pocket elsewhere.
 """
 from __future__ import annotations
 
@@ -50,9 +54,9 @@ from models import WorldState
 @dataclass(frozen=True)
 class GoalCondition:
     """A completion predicate. `kind` selects which optional field applies."""
-    kind: str                       # "location_reached" | "item_held"
-    location: str | None = None     # for location_reached
-    item: str | None = None         # for item_held
+    kind: str                       # "location_reached" | "item_held" | "item_held_at"
+    location: str | None = None     # for location_reached / item_held_at
+    item: str | None = None         # for item_held / item_held_at
 
 
 @dataclass(frozen=True)
@@ -70,7 +74,7 @@ class GoalLoadError(ValueError):
     drop objectives the dungeon author intended."""
 
 
-_VALID_CONDITION_KINDS = frozenset({"location_reached", "item_held"})
+_VALID_CONDITION_KINDS = frozenset({"location_reached", "item_held", "item_held_at"})
 
 
 # ---------------------------------------------------------------------------
@@ -98,6 +102,10 @@ def _parse_condition(raw: Any, goal_id: str) -> GoalCondition | None:
         )
     if kind == "item_held" and not cond.item:
         raise GoalLoadError(f"goal {goal_id!r}: item_held needs an 'item'")
+    if kind == "item_held_at" and not (cond.item and cond.location):
+        raise GoalLoadError(
+            f"goal {goal_id!r}: item_held_at needs both 'item' and 'location'"
+        )
     return cond
 
 
@@ -160,6 +168,18 @@ def any_pc_at(state: WorldState, location_id: str) -> bool:
     return any(pc.location_id == location_id for pc in _party_pcs(state))
 
 
+def item_held_at(state: WorldState, item_id: str, location_id: str) -> bool:
+    """True iff a PC who is carrying `item_id` is currently at `location_id`.
+    The item-BEARER must be the one standing at the spot — distinct from
+    `any_pc_at`, which an empty-handed PC satisfies while the relic sits in a
+    different PC's pocket somewhere else (the 'phantom carry-out' the escape
+    goal hit in the 2026-06-13 web run)."""
+    return any(
+        item_id in (pc.inventory or []) and pc.location_id == location_id
+        for pc in _party_pcs(state)
+    )
+
+
 def is_goal_complete(goal: PartyGoal, state: WorldState) -> bool:
     """True iff the goal's completion predicate holds. A goal with an
     activation gate (`requires_item_held`) cannot be complete while that
@@ -178,6 +198,8 @@ def is_goal_complete(goal: PartyGoal, state: WorldState) -> bool:
         return any_pc_at(state, cond.location)
     if cond.kind == "item_held":
         return party_holds_item(state, cond.item)
+    if cond.kind == "item_held_at":
+        return item_held_at(state, cond.item, cond.location)
     return False
 
 

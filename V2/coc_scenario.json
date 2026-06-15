@@ -1,0 +1,252 @@
+{
+  "ruleset": "coc_lite",
+  "_comment": "The Boarding House on Halsey Street — a small Call of Cthulhu vignette (Arkham, 1924). Demo spine: street -> parlor (Mrs. Garrity) -> hallway -> Wicks's room (journal) -> cellar (the Congregant + idol) -> street. Every coc_lite marker sits on the must-pass spine (M9.5 rule): a Spot Hidden search on the journal, a sanity roll + the fight at the Congregant, armor soak on its hide, and a first-aid kit for the aftermath.",
+  "party_goals": [
+    {
+      "id": "ask_garrity",
+      "text": "Speak with Mrs. Garrity in the parlor about her vanished tenant, Albert Wicks.",
+      "target_location": "loc_parlor",
+      "complete_when": { "kind": "location_reached", "location": "loc_parlor" }
+    },
+    {
+      "id": "search_wicks_room",
+      "text": "Search Albert Wicks's room upstairs and take his journal — examine it closely; a careful eye (a spot_hidden_pct or library_use_pct check) may reveal what he was hiding.",
+      "target_location": "loc_wicks_room",
+      "complete_when": { "kind": "item_held", "item": "item_journal" }
+    },
+    {
+      "id": "confront_cellar",
+      "text": "Descend into the coal cellar and face whatever Wicks's chanting woke. Steel your nerves when you first behold it — a sanity check (stat=\"sanity_pct\") against the thing.",
+      "target_location": "loc_cellar",
+      "complete_when": { "kind": "location_reached", "location": "loc_cellar" }
+    },
+    {
+      "id": "recover_idol",
+      "text": "Recover the tide-worn idol — Wicks locked it in his iron strongbox and the pale thing crouches on the lid. Drive the thing back, pick the lock (Jack's picks), open the box, and take the idol.",
+      "target_location": "loc_cellar",
+      "complete_when": { "kind": "item_held", "item": "item_idol" }
+    },
+    {
+      "id": "escape",
+      "text": "Once the idol is in your hands, carry it back out to Halsey Street alive — whoever holds the idol must be the one to reach the street.",
+      "target_location": "loc_street",
+      "requires_item_held": "item_idol",
+      "complete_when": { "kind": "item_held_at", "item": "item_idol", "location": "loc_street" }
+    }
+  ],
+  "locations": [
+    {
+      "id": "loc_street",
+      "name": "Halsey Street",
+      "description": "A narrow Arkham side street under gas lamps and a wet October sky. Number 13 is a sagging three-storey boarding house; a card in the window still reads ROOM TO LET. The street is the way out, when there is anything left to leave with.",
+      "connections": ["loc_parlor"]
+    },
+    {
+      "id": "loc_parlor",
+      "name": "The Parlor",
+      "description": "A close, lamp-lit parlor smelling of boiled cabbage and beeswax. Mrs. Garrity, the landlady, sits wringing a dishcloth by the cold hearth. A staircase climbs to the upstairs hallway, and behind a thin door under the stairs, rough steps descend to the coal cellar. Something in the floorboards carries a faint, rhythmic knocking from below.",
+      "connections": ["loc_street", "loc_hallway", "loc_cellar"]
+    },
+    {
+      "id": "loc_hallway",
+      "name": "Upstairs Hallway",
+      "description": "A runner of worn carpet between numbered doors. Most stand open on empty, swept rooms — the other tenants left in a hurry. The door at the end, Albert Wicks's room, is shut but unlocked.",
+      "connections": ["loc_parlor", "loc_wicks_room"]
+    },
+    {
+      "id": "loc_wicks_room",
+      "name": "Wicks's Room",
+      "description": "A bachelor's room gone wrong. The bed is made and the basin dry, but every inch of wallpaper is covered in pencilled soundings and tide tables for a coastline that matches no map of Massachusetts. A writing desk by the window holds his journal. The room smells faintly of low tide.",
+      "connections": ["loc_hallway"]
+    },
+    {
+      "id": "loc_cellar",
+      "name": "The Coal Cellar",
+      "description": "Brick vaulting, coal dust, and a wrongness the lamp cannot push back. The knocking stops the moment anyone reaches the foot of the stairs. In the far corner, past the coal chute, something pale and wet crouches atop a squat iron strongbox, rocking. Beholding it squarely is a strain on the mind — steel yourself (sanity check). Whatever Wicks locked away is in that box, and the thing will not move from its lid.",
+      "connections": ["loc_parlor"],
+      "attributes": {
+        "sanity_dc": 10
+      }
+    }
+  ],
+  "entities": [
+    {
+      "id": "ent_pc_eleanor",
+      "display_name": "Dr. Eleanor Voss",
+      "kind": "pc",
+      "location_id": "loc_street",
+      "attributes": {
+        "hp": 10,
+        "max_hp": 10,
+        "sanity_pct": 65,
+        "dex_mod": 1,
+        "str_pct": 40,
+        "con_pct": 50,
+        "siz_pct": 50,
+        "dex_pct": 55,
+        "app_pct": 55,
+        "int_pct": 70,
+        "pow_pct": 65,
+        "edu_pct": 75,
+        "luck_pct": 55,
+        "library_use_pct": 70,
+        "occult_pct": 50,
+        "spot_hidden_pct": 40,
+        "psychology_pct": 45,
+        "persuade_pct": 50,
+        "first_aid_pct": 40,
+        "firearms_pct": 35,
+        "fighting_pct": 30,
+        "attack_skill": "firearms_pct",
+        "weapon_damage": "1d8",
+        "persona": "A Miskatonic University archaeologist, precise and skeptical, carrying her late husband's revolver she half hopes never to use. She reads rooms the way others read books and believes every horror has a catalogue number."
+      }
+    },
+    {
+      "id": "ent_pc_jack",
+      "display_name": "Jack Murphy",
+      "kind": "pc",
+      "location_id": "loc_street",
+      "attributes": {
+        "hp": 12,
+        "max_hp": 12,
+        "sanity_pct": 55,
+        "dex_mod": 2,
+        "str_pct": 60,
+        "con_pct": 60,
+        "siz_pct": 60,
+        "dex_pct": 60,
+        "app_pct": 50,
+        "int_pct": 60,
+        "pow_pct": 55,
+        "edu_pct": 60,
+        "luck_pct": 50,
+        "spot_hidden_pct": 60,
+        "listen_pct": 50,
+        "stealth_pct": 40,
+        "intimidate_pct": 45,
+        "locksmith_pct": 50,
+        "first_aid_pct": 30,
+        "fighting_pct": 55,
+        "firearms_pct": 50,
+        "attack_skill": "fighting_pct",
+        "weapon_damage": "1d6",
+        "persona": "A private investigator out of Boston, all shoe leather and brass knuckles. Unimaginative in the way that keeps a man sane, loyal in the way that gets him hurt. He took this job because Mrs. Garrity reminded him of his mother."
+      },
+      "inventory": ["item_lockpicks"]
+    },
+    {
+      "id": "ent_garrity",
+      "display_name": "Mrs. Garrity",
+      "kind": "npc",
+      "location_id": "loc_parlor",
+      "attributes": {
+        "hp": 6,
+        "max_hp": 6,
+        "dex_mod": 0,
+        "status": "friendly",
+        "disposition": "friendly",
+        "movement_restricted": "will not leave her parlor — someone must mind the house",
+        "persona": "A widowed landlady, devout and frightened, who has fed half the street at her table and will not say the word 'cellar' above a whisper.",
+        "goals": [
+          "Tell the investigators what you know: Albert Wicks was a quiet lodger until he came back from Innsmouth with something wrapped in oilcloth; for weeks you heard him chanting in the cellar at night; nine days ago he went down and never came back up, and now something else knocks.",
+          "Beg them to make the knocking stop, but warn them you have not opened the cellar door since.",
+          "Stay out of the cellar yourself, whatever happens."
+        ]
+      }
+    },
+    {
+      "id": "ent_congregant",
+      "display_name": "The Pale Congregant",
+      "kind": "npc",
+      "location_id": "loc_cellar",
+      "attributes": {
+        "hp": 9,
+        "max_hp": 9,
+        "armor": 2,
+        "dex_mod": 1,
+        "fighting_pct": 45,
+        "weapon_damage": "1d6",
+        "san_loss_on_hit": "1d4",
+        "sanity_dc": 10,
+        "dc": 10,
+        "status": "hostile",
+        "disposition": "hostile",
+        "movement_restricted": "will not leave the dark of the cellar — the light upstairs pains it",
+        "persona": "What is left of Albert Wicks, remade around the idol's congregation: hairless, tide-white, jointed wrong, its skin a rubbery hide that turns a blade. It crouches on the strongbox that holds the idol, rocking and crooning in drowned syllables. Its touch sears the mind. It does not negotiate; it guards the box.",
+        "tactics": "Crouches on the locked strongbox and attacks anyone who comes near it, works at the lock, or strikes it. Its hide (armor 2) soaks light blows — firearms and strong hits get through — and its wet touch costs sanity. It must be fought off or killed before the box can be worked in peace. It will not pursue past the cellar stairs into the lit house.",
+        "goals": [
+          "Keep every living thing away from the strongbox and the idol inside it.",
+          "Strike at anyone who touches the box or its lock.",
+          "Never leave the cellar — the light upstairs pains you.",
+          "Make no bargains; you have no words left, only the croon."
+        ]
+      }
+    }
+  ],
+  "items": [
+    {
+      "id": "item_journal",
+      "name": "Albert Wicks's Journal",
+      "location_id": "loc_wicks_room",
+      "properties": {
+        "type": "lore",
+        "readable": true,
+        "portable": true,
+        "search_dc": 10,
+        "search_stat": "spot_hidden_pct",
+        "dc": 10,
+        "text": "The early pages are a lodger's diary — rent paid, weather, a trip to Innsmouth for 'the estate sale.' The hand degrades by August into tide tables for no earthly coast and one phrase repeating: IT KNOCKS BECAUSE IT IS POLITE. IT WILL NOT BE POLITE FOREVER.",
+        "hidden_text": "A razor-slit in the back board hides a final loose page: 'The idol must go back to the water. It cannot be broken and it must not be kept. I have locked it in my strongbox in the cellar so it cannot call to me at night. If I am not the one reading this, whatever I have become will be crouched upon that box — do not let it touch you. Its touch is the congregation.'"
+      }
+    },
+    {
+      "id": "item_coffer",
+      "name": "Wicks's Iron Strongbox",
+      "location_id": "loc_cellar",
+      "properties": {
+        "type": "container",
+        "locked": true,
+        "lock_dc": 10,
+        "contents": ["item_idol"],
+        "description": "A squat iron strongbox, its lock old but sound — the pale thing crouches on its lid, rocking. Picking the lock means working under its claws."
+      }
+    },
+    {
+      "id": "item_idol",
+      "name": "The Tide-Worn Idol",
+      "location_id": null,
+      "properties": {
+        "type": "macguffin",
+        "portable": true,
+        "inside": "item_coffer",
+        "text": "A fist-sized greenish stone shape, smoothed as if by centuries of surf, suggesting a crouched figure with too many places where limbs ought to be. It is cold, and faintly damp, and it is always faintly damp."
+      }
+    },
+    {
+      "id": "item_lockpicks",
+      "name": "Jack's Lockpicks",
+      "location_id": null,
+      "properties": {
+        "type": "tool",
+        "use": "lockpicking",
+        "check_stat": "locksmith_pct",
+        "carried_by": "ent_pc_jack",
+        "description": "A worn leather roll of picks and tension wrenches — strictly speaking not legal, strictly speaking essential."
+      }
+    },
+    {
+      "id": "item_first_aid",
+      "name": "First-Aid Kit",
+      "location_id": "loc_parlor",
+      "properties": {
+        "type": "consumable",
+        "use": "heal",
+        "heal_formula": "1d6",
+        "uses_remaining": 2,
+        "portable": true,
+        "text": "Mrs. Garrity's household first-aid box: gauze, iodine, a needle, and a half bottle of brandy 'for emergencies.'"
+      }
+    }
+  ]
+}

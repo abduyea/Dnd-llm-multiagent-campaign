@@ -17,6 +17,7 @@ from backend.app.db.models.session import Turn
 from backend.app.models.session import SessionCreate, SessionEnd, SessionResponse
 from backend.app.orchestrator import advance_turn_stream as orchestrator_advance
 from backend.app.orchestrator import end_session as orchestrator_end_session
+from backend.app.orchestrator import get_party_sheets as orchestrator_get_sheets
 from backend.app.orchestrator import get_scene as orchestrator_get_scene
 from backend.app.orchestrator import set_seats as orchestrator_set_seats
 from backend.app.orchestrator import start_session as orchestrator_start_session
@@ -33,6 +34,20 @@ async def get_scene(
     """M11 stage 2: the character's current scene — location (read-out),
     connected exits (move options), and present entities (targets)."""
     result = await orchestrator_get_scene(session_id, character_id, db)
+    if "error" in result:
+        raise HTTPException(status_code=result["status"], detail=result["error"])
+    return result
+
+
+@router.get("/{session_id}/sheets")
+async def get_sheets(
+    session_id: str,
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    """Per-PC engine attributes (+ ruleset) for the character sheet — lets a
+    CoC session render the investigator's real characteristics instead of the
+    D&D ability columns."""
+    result = await orchestrator_get_sheets(session_id, db)
     if "error" in result:
         raise HTTPException(status_code=result["status"], detail=result["error"])
     return result

@@ -146,10 +146,11 @@ class PlayerAgent:
                 f"{view.player_id!r}"
             )
 
-        messages = build_player_prompt(
+        base_messages = build_player_prompt(
             view, state, self.role_description, goals=self.goals,
             empty_intent_streak=self._consecutive_empty_intent_turns,
         )
+        messages = base_messages
         validator = get_action_economy(self.ruleset_name)
         attempts: list[PlayerAttempt] = []
 
@@ -187,7 +188,11 @@ class PlayerAgent:
             if attempt_idx == self.retry_cap:
                 break
 
-            messages = messages + [
+            # Retry with ONE negative example: the base prompt plus only the
+            # most recent failed attempt and its correction. Accumulating every
+            # failure re-sent thousands of chars of bad output exactly when the
+            # model was already struggling with prompt length.
+            messages = base_messages + [
                 {"role": "assistant", "content": chat_result.raw},
                 {"role": "user", "content": _correction_for(attempt)},
             ]
@@ -384,20 +389,15 @@ _PLAYER_SYSTEM_SUFFIX = (
     "your character mechanically DOING (drinking a potion, picking a "
     "lock, attacking, opening a chest, picking up an item, moving to a "
     "room, giving an item) MUST have a matching <intent> tag in the "
-    "same turn. Narrating an action without the matching intent means "
-    "the action does not happen — no dice roll, no inventory change, "
-    "no heal — and you will have wasted the turn pretending. If you "
-    "want the mechanical effect, issue the intent; if you only want "
-    "atmosphere, write atmosphere (\"weighs the vial in her hand\"), "
-    "not action (\"drinks the potion\").\n\n"
-    "Forward progress: If your affordances list says there are no valid "
-    "targets in this scene for the action you want (e.g. \"no DC-bearing "
-    "targets here\", \"no puzzle targets here\", \"NO valid target in "
-    "this scene\"), or if a previous turn's DM narration explicitly told "
-    "you your action did nothing here, do NOT keep retrying the same "
-    "action on the same target. Move to a connected room — the thing "
-    "you need is probably somewhere else. Repeating a SKIPPED action "
-    "wastes the party's turns and never starts working."
+    "same turn — without one the action simply does not happen and the "
+    "turn is wasted. If you only want atmosphere, write atmosphere "
+    "(\"weighs the vial in her hand\"), not action (\"drinks the "
+    "potion\").\n\n"
+    "Forward progress: if your affordances say there is no valid target "
+    "in this scene for the action you want, or a previous turn's DM "
+    "narration told you the action did nothing here, do NOT retry it — "
+    "move to a connected room instead; the thing you need is probably "
+    "somewhere else, and a repeated SKIPPED action never starts working."
 )
 
 
@@ -412,7 +412,8 @@ def build_player_prompt(
     #   1. role_description — who the character is (voice, persona)
     #   2. objective framing — points at the per-turn [Party objective] block
     #   3. _PLAYER_SYSTEM_SUFFIX — how to respond (format rules)
-    #   4. Conditional escalations (empty-intent, room-stickiness)
+    # Conditional escalations (empty-intent, room-stickiness) render at the
+    # top of the USER message — keeping the system block byte-stable per PC.
     # The brief reads "I am X. I am here to do Y. Here is how to reply."
     # which matches how a real player conceptualizes their turn: identity
     # first, then objective, then mechanics.
@@ -433,15 +434,21 @@ def build_player_prompt(
             "(marked ↳) pointing roughly toward the one that matters right "
             "now. Keep them in mind, but you are free to explore side rooms, "
             "talk to the people you meet, and investigate what you find "
-            "along the way — that is often where the dungeon's challenges and "
+            "along the way — that is often where the scenario's challenges and "
             "rewards are. When the hint marks the situation urgent (an "
             "escape, a closing seal), prioritize the hinted direction and "
             "move."
         )
     system += _PLAYER_SYSTEM_SUFFIX
+    # Conditional escalations go in the USER message, not the system one.
+    # The system message must stay byte-stable across a PC's turns so the
+    # local inference server can reuse its prompt-prefix (KV) cache —
+    # appending per-turn text to the system block forced a full prompt
+    # re-ingestion on exactly the turns that were already going badly.
+    escalations = ""
     if empty_intent_streak >= config.EMPTY_INTENT_ESCALATION_THRESHOLD:
-        system += (
-            "\n\n[Forward-progress override]\n"
+        escalations += (
+            "[Forward-progress override]\n"
             f"You have passed {empty_intent_streak} turn(s) in a row "
             "without committing to any <intent> tag. This turn you MUST "
             "declare at least one <intent>. Pick the most promising "
@@ -452,8 +459,8 @@ def build_player_prompt(
             "party."
         )
     if view.consecutive_turns_here >= config.ROOM_STICKINESS_ESCALATION_THRESHOLD:
-        system += (
-            "\n\n[Room-stickiness pressure]\n"
+        escalations += ("\n\n" if escalations else "") + (
+            "[Room-stickiness pressure]\n"
             f"You have spent {view.consecutive_turns_here} consecutive "
             "turns in this room without moving. Repeated <talk> or "
             "<examine> intents on the same targets are valid but they "
@@ -467,7 +474,9 @@ def build_player_prompt(
             "certainly somewhere else."
         )
     rendered = render_for_prompt(view, state, goals=goals)
-    user = rendered + "\n\nWhat does your character do this turn?"
+    user = (escalations + "\n\n" if escalations else "") + rendered + (
+        "\n\nWhat does your character do this turn?"
+    )
     return [
         {"role": "system", "content": system},
         {"role": "user", "content": user},

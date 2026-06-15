@@ -654,6 +654,14 @@ async def get_scene(
     return await engine_glue.get_scene(db, session_id, character_id)
 
 
+async def get_party_sheets(
+    session_id: str,
+    db: AsyncSession,
+) -> dict[str, Any]:
+    """Per-PC engine attributes (+ ruleset) for the character sheet."""
+    return await engine_glue.get_party_sheets(db, session_id)
+
+
 async def advance_turn_stream(
     session_id: str,
     db: AsyncSession,

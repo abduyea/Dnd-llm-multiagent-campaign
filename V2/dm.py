@@ -131,7 +131,8 @@ class DMAgent:
         Returned PlayerTurnResult — the name is historical (it's used
         for both PC and NPC turn plans).
         """
-        messages = build_npc_turn_prompt(state, npc_id, location_id, recent_talks)
+        base_messages = build_npc_turn_prompt(state, npc_id, location_id, recent_talks)
+        messages = base_messages
         validator = get_action_economy(self.ruleset_name)
         attempts: list[PlayerAttempt] = []
 
@@ -159,7 +160,8 @@ class DMAgent:
             if attempt_idx == self.retry_cap:
                 break
 
-            messages = messages + [
+            # One negative example only — see PlayerAgent.act (M12 trim).
+            messages = base_messages + [
                 {"role": "assistant", "content": chat_result.raw},
                 {"role": "user", "content": _player_correction_for(attempt)},
             ]
@@ -231,7 +233,8 @@ class DMAgent:
             if attempt_idx == self.retry_cap:
                 break
 
-            messages = messages + [
+            # One negative example only — see PlayerAgent.act (M12 trim).
+            messages = initial_messages + [
                 {"role": "assistant", "content": chat_result.raw},
                 {"role": "user", "content": _narration_correction(attempt)},
             ]
@@ -355,8 +358,8 @@ _NARRATION_SYSTEM = (
     "what their character does and says in their own prose for this turn. "
     "Your narration must NOT repeat, paraphrase, restate, or quote that "
     "prose back. Your role is to narrate the WORLD'S RESPONSE — the "
-    "environment, the result of dice, what NPCs do in reaction, what "
-    "becomes revealed — never to retell the actor's own actions. If the "
+    "environment, the result of dice, and what becomes revealed — never "
+    "to retell the actor's own actions. If the "
     "actor's prose already covered the moment fully (e.g. a simple move "
     "to an empty room) and the outcomes add nothing, keep your beat to a "
     "single short environmental sentence (what the new room looks like, "
@@ -380,10 +383,11 @@ _NARRATION_SYSTEM = (
     "outcome contains `moved from X to Y` may you describe the actor "
     "as in the new room — and even then, do not narrate them taking "
     "anything from that room unless a pickup outcome also fired this "
-    "turn. A singular world-object (the Heartstone, the Warden's "
-    "throne) does not duplicate: if another PC has already picked it "
-    "up in a prior turn, it is GONE from the pedestal — do not narrate "
-    "a second PC lifting a phantom copy.\n\n"
+    "turn. A singular world-object does not duplicate: if another PC "
+    "has already picked it up in a prior turn, it is GONE from where "
+    "it lay — do not narrate a second PC lifting a phantom copy. "
+    "Never introduce objects, rooms, or creatures the scene state does "
+    "not list.\n\n"
     "ACTOR NAMES: Treat each character's display_name as a single name. "
     "A surname like \"Ironhide\" is part of the character's name, NOT a "
     "piece of armor or equipment. Do not split names into objects and "
@@ -486,21 +490,25 @@ def build_turn_narration_prompt(
             f"outcomes (a talk outcome contains the words they said). If they "
             f"took no mechanical action, still have {actor_name} react or speak "
             f"in character to the party. 1-3 sentences. Do NOT narrate the "
-            f"players' own actions, and do not invent outcomes, objects, or "
-            f"details beyond the list. Treat any key objective item's listed "
-            f"location as fact."
+            f"players' own actions. Treat any key objective item's listed "
+            f"location as fact. Advance the exchange — do not re-explain a "
+            f"warning, direction, or offer you have likely already given; say "
+            f"something new or move it forward."
         )
     else:
+        # The don't-retell-the-actor and don't-invent rules live in
+        # _NARRATION_SYSTEM (the CRITICAL blocks) — not restated here. This
+        # block carries only the per-turn additions: the beat shape, the
+        # NPC-no-speak rule, and the objective-item grounding.
         lines.append(
-            "Narrate this turn as a single beat in 1-3 sentences. Describe "
-            "ONLY what the world does in response to the actor — environment, "
-            "mechanical results, what becomes visible, how NPCs react. Do not "
-            "retell or paraphrase what the actor said or did; the player has "
-            "already narrated that. Do not invent outcomes, objects, or "
-            "details beyond what the outcomes list. In particular, if a key "
-            "objective item is listed above, treat its location as fact — do "
-            "not describe it as being anywhere else (embedded in an NPC, "
-            "elsewhere in the room, etc.)."
+            "Narrate this turn as a single beat in 1-3 sentences — the "
+            "world's response to the actor only (environment, mechanical "
+            "results, what becomes visible). Do NOT speak or act for "
+            "any NPC: a present NPC takes its OWN turn and will respond then — "
+            "at most a wordless reaction (a glance, a tensed hand), never a "
+            "spoken line. If a key objective item is listed above, treat its "
+            "location as fact — do not describe it as being anywhere else "
+            "(embedded in an NPC, elsewhere in the room, etc.)."
         )
     lines.append("")
     lines.append(

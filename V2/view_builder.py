@@ -497,6 +497,13 @@ def render_for_prompt(
         for event in view.visible_events:
             p = event.payload
             if isinstance(p, PlayerAction):
+                # The viewer's OWN actions are already in the terse
+                # [Your recent actions] digest — echoing the full prose here is
+                # redundant and feeds repetition, so skip them. A teammate's
+                # action witnessed in the same room is NOT redundant (it's
+                # party-awareness / voice), so keep those.
+                if p.player_id == view.player_id:
+                    continue
                 speaker = state.entities.get(p.player_id)
                 name = speaker.display_name if speaker else p.player_id
                 lines.append(f'{name}: "{p.text}"')
@@ -547,6 +554,11 @@ def render_for_prompt(
                 tag = f" ({status})"
             else:
                 tag = ""
+            # M12: surface conditions (prone/poisoned/…) — they change how an
+            # attack against this entity resolves, so the model should see them.
+            conds = e.attributes.get("conditions")
+            if isinstance(conds, list) and conds:
+                tag += f" [{', '.join(str(c) for c in conds)}]"
             lines.append(f"  - {e.display_name}{tag}")
 
     # B2 follow-up: nearby combat sound cues. Only the distance + the
@@ -581,6 +593,10 @@ def render_for_prompt(
             coin = me.attributes.get("coin")
             if isinstance(coin, (int, float)) and not isinstance(coin, bool):
                 status_bits.append(f"coin {int(coin)}")
+            # M12: your own conditions (they impose disadvantage on your rolls).
+            my_conds = me.attributes.get("conditions")
+            if isinstance(my_conds, list) and my_conds:
+                status_bits.append("conditions: " + ", ".join(str(c) for c in my_conds))
             lines.append(f"[Your status: {', '.join(status_bits)}]")
         # M9: surface countdown_* attributes (e.g. countdown_heartstone_escape
         # = 3) so the player sees their timer pressure.
@@ -643,10 +659,32 @@ def render_for_prompt(
     # it chooses. One line, dot-separated — cheap on tokens.
     if view.recent_actions:
         lines.append("")
-        lines.append(
-            "[Your recent actions — don't just repeat these; "
-            "a repeated check/talk on the same target rarely reveals more]"
-        )
+        # Detect a fixation loop: the digest collapses consecutive repeats to
+        # "… ×N", so a high N means the player keeps doing the same thing. When
+        # that happens, escalate from the soft reminder to a hard STOP keyed on
+        # the exact repeated action — this is the failure mode (e.g. searching
+        # the same item 3+ times) the soft line wasn't catching. Fires only
+        # during an actual loop, so it costs nothing on a healthy run.
+        _worst, _max_rep = "", 0
+        for _entry in view.recent_actions:
+            _m = re.search(r"×(\d+)\s*$", _entry)
+            _n = int(_m.group(1)) if _m else 1
+            if _n > _max_rep:
+                _max_rep, _worst = _n, re.sub(r"\s*×\d+\s*$", "", _entry)
+        if _max_rep >= 4:
+            lines.append(
+                f"[STOP — you are repeating yourself] You have already done "
+                f"the same thing ({_worst}) {_max_rep} times with no new "
+                f"result. Doing it again will NOT work and wastes the turn. "
+                f"This turn do something DIFFERENT: move to a connected room, "
+                f"use a different kind of action, or act toward your objective "
+                f"somewhere else — not the same action on the same target."
+            )
+        else:
+            lines.append(
+                "[Your recent actions — don't just repeat these; "
+                "a repeated check/talk on the same target rarely reveals more]"
+            )
         lines.append("  " + " · ".join(view.recent_actions))
 
     # M8: append the affordances block so the player prompt can list
@@ -904,57 +942,42 @@ def _render_goals_block(
 
 
 def _render_visited_rooms(view: PlayerView, state: WorldState) -> str:
-    """M8.1 spatial-memory block: each room the player has visited, with
-    its connections. The current room is marked. Rooms the player has
-    never visited do NOT appear (M4 G1 carries — visited_locations was
-    built from this player's own create+move events only).
+    """Compact spatial memory (M11 prompt-trim): a one-line list of explored
+    room ids (current room marked) + a one-line list of still-unexplored exits
+    reachable from explored rooms.
 
-    B2 follow-up: each exit is annotated as [visited] or [unexplored]
-    based on whether the exit id is in the player's visited_locations
-    set. After the per-room map, a [Frontier] section lists every
-    unique unvisited exit id reachable in one step from any visited
-    room. Names of unvisited rooms are NOT surfaced (preserves TTRPG
-    fog-of-war: PCs don't know what's behind a door until they open
-    it)."""
+    The old block rendered the full per-room connectivity graph every turn
+    (~25% of the late-game prompt). That was largely redundant: the navigation
+    hint already computes the route to the objective, and the Move affordance
+    lists the current room's exits — so the verbose graph mostly fed prompt
+    bloat and decision noise. We keep only what the model can't get elsewhere:
+    which rooms it has seen, and which exits remain unexplored.
+
+    M4 G1 still holds: only this player's visited rooms appear, and the frontier
+    names only exit ids one hop out (the same fog-of-war disclosure as before —
+    contents stay unknown until entered)."""
     if not view.visited_locations:
         return ""
     visited_set: set[str] = set(view.visited_locations)
-    lines = ["[Rooms you have explored — your discovered map]"]
-    frontier_seen: set[str] = set()
+    rooms = ", ".join(
+        f"{loc_id}{' (you are here)' if loc_id == view.current_location_id else ''}"
+        for loc_id in view.visited_locations
+    )
+    lines = [f"[Map — {len(view.visited_locations)} rooms explored]", f"  {rooms}"]
+
+    frontier: list[str] = []
     for loc_id in view.visited_locations:
         loc = state.locations.get(loc_id)
         if loc is None:
             continue
-        marker = "  ← you are here" if loc_id == view.current_location_id else ""
-        lines.append(f"  {loc_id} — {loc.name}{marker}")
-        if not loc.connections:
-            lines.append("    Exits: (no exits)")
-            continue
-        lines.append("    Exits:")
-        for exit_id in sorted(loc.connections):
-            tag = "[visited]" if exit_id in visited_set else "[unexplored]"
-            lines.append(f"      - {exit_id} {tag}")
-            if exit_id not in visited_set:
-                frontier_seen.add(exit_id)
-
-    if frontier_seen:
-        lines.append("")
-        lines.append("[Frontier — unexplored rooms one step from your map]")
+        for exit_id in loc.connections:
+            if exit_id not in visited_set and exit_id not in frontier:
+                frontier.append(exit_id)
+    if frontier:
         lines.append(
-            "These rooms connect to a room you have been in but you have "
-            "not entered them yet. Their contents are unknown until you "
-            "move into them."
+            "  Unexplored exits (contents unknown until you enter): "
+            + ", ".join(sorted(frontier))
         )
-        # Sort for deterministic output (test-friendly + replay-stable).
-        for exit_id in sorted(frontier_seen):
-            # Show which visited room(s) reach this frontier id; helps the
-            # LLM plan a route.
-            from_rooms = sorted(
-                v for v in view.visited_locations
-                if exit_id in (state.locations[v].connections if v in state.locations else [])
-            )
-            from_csv = ", ".join(from_rooms)
-            lines.append(f"  - {exit_id} (reachable from: {from_csv})")
     return "\n".join(lines)
 
 
@@ -1148,9 +1171,12 @@ def _render_affordances(view: PlayerView, state: WorldState) -> str:
         actor_attrs=actor.attributes,
     )
     if dc_targets:
+        # `_mod` = d20 modifiers (dnd5e_lite); `_pct` = percentile skills
+        # (coc_lite). Both are flat int attributes the check intent rolls.
         stat_keys = sorted(
             k for k in actor.attributes.keys()
-            if k.endswith("_mod") and isinstance(actor.attributes[k], int)
+            if (k.endswith("_mod") or k.endswith("_pct"))
+            and isinstance(actor.attributes[k], int)
             and not isinstance(actor.attributes[k], bool)
         )
         out.append(

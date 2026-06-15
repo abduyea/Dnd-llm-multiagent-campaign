@@ -405,21 +405,101 @@ function _updateTurnLogFilter() {
 // ── Shared action-type lookup tables ────────────────────
 const ACTION_COLORS = {
   attack_melee:  "#e04040",
+  attack:        "#e04040",
   attack_ranged: "#e07020",
   cast_spell:    "#5ba8e8",
+  cast:          "#5ba8e8",
   skill_check:   "#3de882",
+  check:         "#3de882",
   movement:      "#9b59b6",
+  move:          "#9b59b6",
+  talk:          "#d4aa50",
   roleplay:      "#d4aa50",
+  examine:       "#8fb7d4",
+  look:          "#8fb7d4",
+  use_item:      "#e0b040",
+  pickup:        "#e0b040",
+  puzzle_answer: "#c060d0",
+  death_save:    "#e04040",
+  npc_turn:      "#b9912f",
+  ai_turn:       "#5ba8e8",
 };
 const ACTION_ICONS = {
   attack_melee:  "bi-sword",
+  attack:        "bi-sword",
   attack_ranged: "bi-bullseye",
   cast_spell:    "bi-stars",
+  cast:          "bi-stars",
   skill_check:   "bi-clipboard-check",
+  check:         "bi-clipboard-check",
   movement:      "bi-arrows-move",
+  move:          "bi-arrows-move",
+  talk:          "bi-chat-dots",
   roleplay:      "bi-chat-quote",
+  examine:       "bi-search",
+  look:          "bi-eye",
+  use_item:      "bi-droplet-half",
+  pickup:        "bi-bag-plus",
+  puzzle_answer: "bi-puzzle",
+  death_save:    "bi-heart-pulse",
+  inspect:       "bi-search",
+  give:          "bi-box-arrow-right",
+  wait:          "bi-hourglass-split",
+  open:          "bi-door-open",
+  trade:         "bi-arrow-left-right",
+  npc_turn:      "bi-person-fill",
+  ai_turn:       "bi-robot",
 };
 
+// Short human-readable label per action/intent type, for the in-feed pills.
+const ACTION_LABELS = {
+  attack: "Attack", attack_melee: "Attack", attack_ranged: "Attack",
+  cast: "Cast", cast_spell: "Cast",
+  skill_check: "Check", check: "Check",
+  movement: "Move", move: "Move",
+  talk: "Talk", roleplay: "Roleplay",
+  examine: "Examine", inspect: "Examine", look: "Look",
+  use_item: "Use Item", pickup: "Pick Up", give: "Give", trade: "Trade", open: "Open",
+  puzzle_answer: "Answer", wait: "Wait", death_save: "Death Save",
+};
+function actionLabelFor(t) {
+  return ACTION_LABELS[t]
+    || String(t || "").replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+}
+
+// The action pills for a turn: one small colored chip per intent ("Move",
+// "Talk"), rendered before the prose so you can see who did what at a glance.
+// Pure inline styles so no global .narration-action CSS recolors them.
+function actionPillsHTML(actions) {
+  if (!Array.isArray(actions) || !actions.length) return "";
+  const seen = new Set();
+  return actions
+    .filter(a => a && !seen.has(a) && seen.add(a))
+    .map(a => {
+      const icon  = ACTION_ICONS[a]  || "bi-circle";
+      const color = ACTION_COLORS[a] || "#a88030";
+      return `<span class="action-pill-inline" style="`
+        + `display:inline-flex;align-items:center;gap:0.22em;`
+        + `padding:0.02rem 0.42rem;margin:0 0.12rem;border-radius:10px;`
+        + `font-size:0.62rem;font-weight:600;letter-spacing:0.03em;`
+        + `vertical-align:middle;white-space:nowrap;`
+        + `color:${color};background:${color}1f;border:1px solid ${color}55;">`
+        + `<i class="bi ${icon}" style="font-size:0.62rem;opacity:0.95;"></i>${esc(actionLabelFor(a))}`
+        + `</span>`;
+    })
+    .join("");
+}
+
+// A small inline action glyph (just the icon, no button) for an actor's beat in
+// the narration feed — so it reads "[⚔] Brakka — …" / "[🦶] Sylvi — …" and you
+// can tell who's doing what at a glance. Falls back to a neutral dot.
+function actionGlyphHTML(type, opacity = 0.8) {
+  const t = type || "roleplay";
+  const icon  = ACTION_ICONS[t]  || "bi-circle";
+  const color = ACTION_COLORS[t] || "#a88030";
+  const label = String(t).replace(/_/g, " ");
+  return `<i class="bi ${icon} action-glyph me-1" style="color:${color};opacity:${opacity};" title="${esc(label)}"></i>`;
+}
 // ── Demo dungeon cast (from V2 demo_dungeon.json) ────────
 // Pre-built NPCs for "The Sunken Vault" demo. Each carries the rich persona
 // fields (persona/disposition/goals/secret/negotiation_levers) the DM + NPC
@@ -1053,8 +1133,8 @@ async function renderCampaignList(root) {
           <button class="btn dd-btn-primary" data-bs-toggle="modal" data-bs-target="#modal-new-campaign">
             <i class="bi bi-plus-circle me-2"></i>Begin the First Adventure
           </button>
-          <button class="btn btn-outline-secondary" id="btn-quick-start-demo" title="Load a pre-built starter campaign">
-            <i class="bi bi-lightning-charge me-2"></i>Quick Start — The Sunken Vault
+          <button class="btn btn-outline-secondary btn-quick-start-demo" title="Load a pre-built starter campaign in the selected ruleset">
+            <i class="bi bi-lightning-charge me-2"></i>Quick Start a Demo
           </button>
         </div>
        </div></div>`
@@ -1120,8 +1200,8 @@ async function renderCampaignList(root) {
     <div class="dd-hero-banner">
       ${HERO_SVG}
       <div class="dd-hero-overlay">
-        <div class="dd-hero-title">D&amp;D Multi-AI Agent Storytelling System</div>
-        <div class="dd-hero-subtitle">Where every roll shapes a legend</div>
+        <div class="dd-hero-title">TTRPG Storyteller</div>
+        <div class="dd-hero-subtitle">Where every roll shapes a legend — any ruleset, one engine</div>
       </div>
     </div>
     <div class="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-3">
@@ -1138,6 +1218,17 @@ async function renderCampaignList(root) {
               placeholder="Search… (S)" style="border-left:none;" aria-label="Search campaigns">
           </div>
           <span id="search-result-count" class="search-result-count" style="display:none;"></span>
+        </div>
+        <div class="d-flex align-items-center gap-1" title="Game system for Quick Start demos">
+          <select id="ruleset-select" class="form-select form-select-sm dd-input"
+            style="width:auto;border-color:rgba(212,170,80,0.18);" aria-label="Ruleset">
+            <option value="dnd5e_lite">D&amp;D 5e</option>
+            <option value="coc_lite">Call of Cthulhu</option>
+          </select>
+          <button class="btn btn-sm btn-outline-secondary btn-quick-start-demo"
+            style="white-space:nowrap;" title="Load a pre-built starter campaign in the selected ruleset">
+            <i class="bi bi-lightning-charge me-1"></i>Quick Start
+          </button>
         </div>
         <button class="btn btn-sm" id="btn-import-campaign"
           style="border:1px solid rgba(212,175,55,0.28);color:var(--dd-gold-muted);
@@ -1261,17 +1352,31 @@ async function renderCampaignList(root) {
     fileInput.click();
   });
 
-  document.getElementById("btn-quick-start-demo")?.addEventListener("click", async () => {
-    const btn = document.getElementById("btn-quick-start-demo");
-    if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Creating…'; }
-    try {
-      const result = await createDemoCampaign();
-      showToast(`"${result.name}" created! Two characters are ready.`, "success");
-      window.location.hash = `#/campaign/${result.campaign_id}`;
-    } catch (err) {
-      showToast(err.message || "Failed to create demo campaign.", "danger");
-      if (btn) { btn.disabled = false; btn.innerHTML = '<i class="bi bi-lightning-charge me-2"></i>Quick Start — The Sunken Vault'; }
-    }
+  // Ruleset picker for Quick Start demos (persisted across renders).
+  const rulesetSelect = document.getElementById("ruleset-select");
+  if (rulesetSelect) {
+    rulesetSelect.value = localStorage.getItem("dd_ruleset") || "dnd5e_lite";
+    rulesetSelect.addEventListener("change", () => {
+      localStorage.setItem("dd_ruleset", rulesetSelect.value);
+    });
+  }
+
+  document.querySelectorAll(".btn-quick-start-demo").forEach(qsBtn => {
+    qsBtn.addEventListener("click", async () => {
+      const ruleset = document.getElementById("ruleset-select")?.value || "dnd5e_lite";
+      const restore = qsBtn.innerHTML;
+      qsBtn.disabled = true;
+      qsBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Creating…';
+      try {
+        const result = await createDemoCampaign(ruleset);
+        showToast(`"${result.name}" created! Two characters are ready.`, "success");
+        window.location.hash = `#/campaign/${result.campaign_id}`;
+      } catch (err) {
+        showToast(err.message || "Failed to create demo campaign.", "danger");
+        qsBtn.disabled = false;
+        qsBtn.innerHTML = restore;
+      }
+    });
   });
 
   document.querySelectorAll(".btn-delete-campaign").forEach(btn => {
@@ -1710,14 +1815,17 @@ async function renderCampaignDetail(id, root) {
 // VIEW: Game Session
 // ════════════════════════════════════════════════════════
 async function renderSessionView(sessionId, root) {
-  let session, characters = [], pastTurns = [], campaignName = "";
+  let session, characters = [], pastTurns = [], campaignName = "", partySheets = null;
   try {
     session = await getSession(sessionId);
-    [characters, pastTurns, campaignName] = await Promise.all([
+    [characters, pastTurns, campaignName, partySheets] = await Promise.all([
       listCharacters(session.campaign_id),
       getSessionTurns(sessionId).catch(() => []),
       getCampaign(session.campaign_id).then(c => c.name).catch(() => ""),
+      // Engine attributes for the sheet (CoC characteristics vs D&D columns).
+      getPartySheets(sessionId).catch(() => null),
     ]);
+    State.partySheets = partySheets;
   } catch (e) {
     root.innerHTML = `<div class="empty-state"><p>${e.message}</p><a href="#/" class="btn dd-btn-primary mt-3">Back</a></div>`;
     return;
@@ -2269,7 +2377,7 @@ function wireSessionEvents(session, characters, root, campaignName = "") {
   async function loadMemories() {
     if (!memoryList) return;
     try {
-      const res = await fetch(`http://localhost:8000/api/v1/sessions/${session.id}/memories`);
+      const res = await fetch(`http://localhost:8001/api/v1/sessions/${session.id}/memories`);
       if (!res.ok) return;
       const facts = await res.json();
       if (!facts.length) {
@@ -2378,15 +2486,19 @@ function wireSessionEvents(session, characters, root, campaignName = "") {
     tg.style.display = "";
   }
 
-  // A skill-check verdict chip from the engine's check_result (real DC + roll),
-  // e.g. "PASS · insight (WIS) 17 vs DC 11".
+  // A skill-check verdict chip from the engine's check_result. The backend
+  // supplies a humanized skill label and a ruleset-appropriate comparison
+  // string (d20 "17 vs DC 11" vs CoC roll-under "rolled 47 ≤ 70"), so the chip
+  // renders both systems correctly — e.g. "PASS · insight (WIS) 17 vs DC 11"
+  // or "PASS · decipher cipher (LIBRARY USE) rolled 09 ≤ 70".
   function m11CheckChip(cr) {
     if (!cr) return "";
-    const ability = (cr.stat || "").replace(/_mod$/, "").toUpperCase();
+    const ability = (cr.stat_label || (cr.stat || "").replace(/_(mod|pct|save)$/, "").replace(/_/g, " ")).toUpperCase();
+    const detail = cr.display || `${cr.total} vs DC ${cr.dc}`;
     const verdict = cr.success ? "PASS" : "FAIL";
     return `<span class="dice-chip skill-${cr.success ? "pass" : "fail"}">`
       + `${verdict} · ${esc(cr.purpose || "check")}`
-      + `${ability ? ` (${esc(ability)})` : ""} ${cr.total} vs DC ${cr.dc}</span>`;
+      + `${ability ? ` (${esc(ability)})` : ""} ${esc(detail)}</span>`;
   }
 
   // ── M11: engine-backed combat panel ────────────────────────────────
@@ -2457,9 +2569,15 @@ function wireSessionEvents(session, characters, root, campaignName = "") {
       total: o.initiative ?? 0, roll: o.initiative ?? 0, dexMod: 0,
       entityId: o.id, ac: o.ac, attackBonus: o.attack_mod,
     }));
+    // M12: the engine now tracks conditions — make them authoritative on each
+    // combatant so the initiative list + enemy cards render them.
+    (combat.order || []).forEach(o => {
+      if (Array.isArray(o.conditions)) State.conditions[o.id] = o.conditions;
+    });
     State.currentTurnIndex = (combat.order || []).findIndex(o => o.is_active);
     renderEnemies();
     renderInitiativeList();
+    renderAllCondLists();            // M12: paint engine conditions on the cards
     m11HideManualCombatControls();   // re-hide enemy-turn-panel after render
   }
 
@@ -2564,15 +2682,29 @@ function wireSessionEvents(session, characters, root, campaignName = "") {
 
   function m11ExtractQuotes(text) {
     // Pull quoted spans (straight or curly quotes) from an NPC's narration to
-    // surface as spoken dialogue.
+    // surface as spoken dialogue. Only treat a span as an utterance if it's a
+    // real line — long enough AND multi-word — so a quoted riddle word or an
+    // emphasis quote in descriptive prose (e.g. the word 'ash') is NOT mistaken
+    // for the NPC speaking.
     const out = [];
     const re = /[“"]([^”"]{2,300}?)[”"]/g;
     let m;
     while ((m = re.exec(text || "")) !== null) {
       const s = m[1].trim();
-      if (s.length >= 2) out.push(s);
+      if (s.length >= 12 && /\s/.test(s)) out.push(s);
     }
     return out;
+  }
+
+  // Remove quoted spans we've already surfaced as speech bubbles from the
+  // narration text, so an NPC's line isn't printed twice (bubble + narration).
+  function _stripBubbledQuotes(text, quotes) {
+    let t = text || "";
+    quotes.forEach(q => {
+      const e = q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      t = t.replace(new RegExp('[“"‘\']\\s*' + e + '\\s*[”"’\']', "g"), " ");
+    });
+    return t.replace(/\s{2,}/g, " ").trim();
   }
 
   function m11RenderEngineTurn(result, narration) {
@@ -2582,6 +2714,9 @@ function wireSessionEvents(session, characters, root, campaignName = "") {
     const kind = (result && result.actor_kind) || "npc";
     const label = kind === "npc" ? name : (name ? `${name} (AI)` : "AI");
     const actorProse = (result && result.actor_prose || "").trim();
+    // The action pills for this turn (every verb it contained: "Move, Talk"),
+    // shown before the actor's prose / by their name so it's clear who did what.
+    const pills = actionPillsHTML(result && result.actions);
 
     // An AI-controlled hero declares its own turn in character — surface that
     // prose the same way a human player's typed action renders (speaker — prose)
@@ -2592,7 +2727,9 @@ function wireSessionEvents(session, characters, root, campaignName = "") {
       const actEl = document.createElement("div");
       actEl.className = "narration-block nar-enter";
       actEl.innerHTML = `<div class="narration-action" data-type="ai_turn">`
-        + `<strong>${esc(label)}</strong> — <em>${esc(actorProse)}</em></div>`;
+        + `<strong>${esc(label)}</strong>`
+        + (pills ? ` — ${pills}` : "")
+        + ` — <em>${esc(actorProse)}</em></div>`;
       feed.append(actEl);
     }
 
@@ -2603,16 +2740,15 @@ function wireSessionEvents(session, characters, root, campaignName = "") {
     const speakerStyle = hostile ? ' style="color:var(--dd-red);"' : "";
 
     // Surface quoted NPC speech as a speech bubble (reusing the house style).
-    if (kind === "npc" && name) {
-      m11ExtractQuotes(narration).forEach(speech => {
-        const npcEl = document.createElement("div");
-        npcEl.className = "narration-block nar-enter";
-        npcEl.innerHTML = `<div class="narration-npc"${hostile ? ' style="border-color:rgba(224,64,64,0.45);"' : ""}>`
-          + `<div class="npc-speaker"${speakerStyle}>${esc(name)}</div>`
-          + `<div class="npc-speech">&ldquo;${esc(speech)}&rdquo;</div></div>`;
-        feed.append(npcEl);
-      });
-    }
+    const npcQuotes = (kind === "npc" && name) ? m11ExtractQuotes(narration) : [];
+    npcQuotes.forEach(speech => {
+      const npcEl = document.createElement("div");
+      npcEl.className = "narration-block nar-enter";
+      npcEl.innerHTML = `<div class="narration-npc"${hostile ? ' style="border-color:rgba(224,64,64,0.45);"' : ""}>`
+        + `<div class="npc-speaker"${speakerStyle}>${esc(name)}</div>`
+        + `<div class="npc-speech">&ldquo;${esc(speech)}&rdquo;</div></div>`;
+      feed.append(npcEl);
+    });
 
     let chips = "";
     if (result && result.attack_result) {
@@ -2624,19 +2760,29 @@ function wireSessionEvents(session, characters, root, campaignName = "") {
     // An AI hero / NPC skill check gets the same PASS/FAIL chip as a human's.
     if (result && result.check_result) chips += m11CheckChip(result.check_result);
 
-    // The acting beat: speaker label + narration, tinted by actor kind so engine
-    // turns read as "this NPC/AI hero acted" rather than anonymous DM narration.
-    // Hostile NPC → red, friendly NPC → gold, AI hero → blue.
-    const borderColor = hostile ? "var(--dd-red)"
-      : kind === "npc" ? "var(--dd-gold-muted, #b9912f)" : "rgba(91,168,232,0.6)";
-    const labelStyle = hostile ? "opacity:0.95;color:var(--dd-red);" : "opacity:0.85;";
-    const block = document.createElement("div");
-    block.className = "narration-block nar-enter";
-    block.innerHTML = `<div class="narration-dm m11-engine-turn" style="border-left:2px solid ${borderColor};padding-left:0.6rem;">`
-      + (label ? `<div class="npc-speaker" style="${labelStyle}">${esc(label)}</div>` : "")
-      + (chips ? `<div class="narration-result">${chips}</div>` : "")
-      + `${formatNarration(narration || "")}</div>`;
-    feed.append(block);
+    // The narration shown in the DM block, with any lines we already bubbled
+    // removed so an NPC's speech isn't printed twice (bubble + narration).
+    const narrForBlock = npcQuotes.length
+      ? _stripBubbledQuotes(narration, npcQuotes)
+      : (narration || "");
+
+    // Skip the DM block entirely on a pure-dialogue NPC turn (nothing left after
+    // stripping and no chips) — the speech bubble already carries it.
+    if (narrForBlock || chips || !npcQuotes.length) {
+      // The acting beat: speaker label + narration, tinted by actor kind so engine
+      // turns read as "this NPC/AI hero acted" rather than anonymous DM narration.
+      // Hostile NPC → red, friendly NPC → gold, AI hero → blue.
+      const borderColor = hostile ? "var(--dd-red)"
+        : kind === "npc" ? "var(--dd-gold-muted, #b9912f)" : "rgba(91,168,232,0.6)";
+      const labelStyle = hostile ? "opacity:0.95;color:var(--dd-red);" : "opacity:0.85;";
+      const block = document.createElement("div");
+      block.className = "narration-block nar-enter";
+      block.innerHTML = `<div class="narration-dm m11-engine-turn" style="border-left:2px solid ${borderColor};padding-left:0.6rem;">`
+        + (label ? `<div class="npc-speaker" style="${labelStyle}">${esc(label)}${(kind === "pc" && actorProse) || !pills ? "" : " " + pills}</div>` : "")
+        + (chips ? `<div class="narration-result">${chips}</div>` : "")
+        + `${formatNarration(narrForBlock)}</div>`;
+      feed.append(block);
+    }
     feed.scrollTop = feed.scrollHeight;
     if (result) m11ApplyStateChanges(result.state_changes);
     // Keep the header turn counter moving on engine turns too (it used to
@@ -3487,6 +3633,22 @@ function wireSessionEvents(session, characters, root, campaignName = "") {
     if (!c) return;
     _csCurrentCharId = charId;
 
+    // Reset any CoC-specific overrides from a prior open (the modal DOM
+    // persists across renders, so D&D sheets must restore their own labels).
+    const _r = (id, fn) => { const el = document.getElementById(id); if (el) fn(el); };
+    const _statLbl = (statId, text) => {
+      const el = document.querySelector(`#${statId} .cs-combat-lbl`);
+      if (el) el.textContent = text;
+    };
+    _r("cs-ac-lbl", el => el.textContent = "Armor Class");
+    _r("cs-abilities-label", el => el.innerHTML = '<i class="bi bi-bar-chart-fill me-1"></i>Ability Scores');
+    ["cs-init-stat", "cs-speed-stat", "cs-pb-stat", "cs-saves-col"].forEach(id =>
+      _r(id, el => el.classList.remove("d-none")));
+    _statLbl("cs-init-stat", "Initiative");
+    _statLbl("cs-speed-stat", "Speed");
+    _statLbl("cs-pb-stat", "Prof. Bonus");
+    _r("cs-skills-col", el => { el.classList.add("col-md-6"); el.classList.remove("col-12"); });
+
     const pb = profBonus(c.level);
     const hpPct = c.hp_max > 0 ? Math.max(0, Math.min(100, (c.hp_current / c.hp_max) * 100)) : 0;
     const hpFillCls = hpFillClass(c.hp_current, c.hp_max);
@@ -3586,6 +3748,81 @@ function wireSessionEvents(session, characters, root, campaignName = "") {
           <span class="cs-row-val" data-${sign}="true">${base >= 0 ? "+" : ""}${base}</span>
         </div>`;
       }).join("");
+    }
+
+    // CoC override: when the session's ruleset is coc_lite, replace the D&D
+    // ability/saves/skills blocks (rendered above) with the investigator's real
+    // engine characteristics — percentile characteristics, Sanity, and the
+    // percentile skill list. (D&D sessions skip this entirely.)
+    const ps = State.partySheets;
+    const cocSheet = (ps && ps.ruleset === "coc_lite" && ps.sheets && ps.sheets[charId])
+      ? ps.sheets[charId] : null;
+    if (cocSheet) {
+      const at = cocSheet.attributes || {};
+      const pct = k => (typeof at[k] === "number" ? at[k] : null);
+      // Header: repurpose the five D&D combat boxes for CoC 7e secondary
+      // attributes — HP (kept), Sanity (= POW), Magic Points (POW÷5), Luck,
+      // and Move. All derived per the 7e Investigator Handbook.
+      const POW = pct("pow_pct"), STR = pct("str_pct"), DEX = pct("dex_pct"), SIZ = pct("siz_pct");
+      if (pct("sanity_pct") != null) _r("cs-ac", el => el.textContent = pct("sanity_pct"));
+      _r("cs-ac-lbl", el => el.textContent = "Sanity");
+      _r("cs-init", el => el.textContent = POW != null ? Math.floor(POW / 5) : "—");
+      _statLbl("cs-init-stat", "Magic");
+      _r("cs-speed", el => el.textContent = pct("luck_pct") != null ? pct("luck_pct") : "—");
+      _statLbl("cs-speed-stat", "Luck");
+      // Move 8 base; 7 if both STR & DEX < SIZ, 9 if both > SIZ.
+      let mov = 8;
+      if (STR != null && DEX != null && SIZ != null) {
+        if (STR < SIZ && DEX < SIZ) mov = 7;
+        else if (STR > SIZ && DEX > SIZ) mov = 9;
+      }
+      _r("cs-pb", el => el.textContent = mov);
+      _statLbl("cs-pb-stat", "Move");
+      // Characteristics → the ability grid. Sub-line shows the Hard (½) /
+      // Extreme (⅕) thresholds an investigator rolls under. The header carries
+      // Build + Damage Bonus (derived from STR+SIZ, 7e Table 1).
+      const ss = (STR || 0) + (SIZ || 0);
+      const bdb = ss <= 64 ? { b: -2, d: "−2" } : ss <= 84 ? { b: -1, d: "−1" }
+        : ss <= 124 ? { b: 0, d: "none" } : ss <= 164 ? { b: 1, d: "+1D4" }
+        : ss <= 204 ? { b: 2, d: "+1D6" } : { b: 3, d: "+2D6" };
+      _r("cs-abilities-label", el => el.innerHTML =
+        '<i class="bi bi-bar-chart-fill me-1"></i>Characteristics'
+        + `<span style="float:right;font-weight:400;opacity:0.7;font-size:0.82em;">`
+        + `Build ${bdb.b >= 0 ? "+" : ""}${bdb.b} · Damage Bonus ${bdb.d}</span>`);
+      const CHARS = [["STR","str_pct"],["CON","con_pct"],["SIZ","siz_pct"],["DEX","dex_pct"],
+                     ["APP","app_pct"],["INT","int_pct"],["POW","pow_pct"],["EDU","edu_pct"]];
+      _r("cs-ability-grid", grid => {
+        grid.innerHTML = CHARS.filter(([, k]) => pct(k) != null).map(([name, k]) => {
+          const v = pct(k);
+          return `<div class="cs-ability-box" data-neutral="true">
+            <div class="cs-ability-mod">${Math.floor(v / 2)}/${Math.floor(v / 5)}</div>
+            <div class="cs-ability-score">${v}</div>
+            <div class="cs-ability-name">${name}</div>
+          </div>`;
+        }).join("");
+      });
+      // CoC has no saving throws — hide that column, widen Skills.
+      _r("cs-saves-col", el => el.classList.add("d-none"));
+      _r("cs-skills-col", el => { el.classList.remove("col-md-6"); el.classList.add("col-12"); });
+      // Skills = every _pct attribute that isn't a core characteristic / Sanity.
+      const CORE = new Set(["str_pct","con_pct","siz_pct","dex_pct","app_pct","int_pct",
+                            "pow_pct","edu_pct","sanity_pct","luck_pct"]);
+      const skills = Object.keys(at)
+        .filter(k => k.endsWith("_pct") && !CORE.has(k))
+        .map(k => [k.replace(/_pct$/, "").replace(/_/g, " ").replace(/\b\w/g, m => m.toUpperCase()), at[k]])
+        .sort((a, b) => a[0].localeCompare(b[0]));
+      _r("cs-skills", skEl => {
+        skEl.innerHTML = skills.length
+          ? skills.map(([name, v]) => {
+              const sign = v >= 50 ? "positive" : "zero";
+              return `<div class="cs-list-row">
+                <span class="cs-row-ability">%</span>
+                <span class="cs-row-name">${esc(name)}</span>
+                <span class="cs-row-val" data-${sign}="true">${v}</span>
+              </div>`;
+            }).join("")
+          : '<span class="text-muted fst-italic small">No skills</span>';
+      });
     }
 
     const bsEl = document.getElementById("cs-backstory");
@@ -4345,10 +4582,11 @@ function wireSessionEvents(session, characters, root, campaignName = "") {
 
           const actionEl = document.createElement("div");
           actionEl.className = "narration-block nar-enter";
-          actionEl.innerHTML = `<div class="narration-action" data-type="${esc(type)}">
-            <strong>${esc(charName(charId))}</strong>
-            — <em>${esc(fullDesc)}</em>
-          </div>`;
+          const _humanPills = actionPillsHTML(chunk.actions);
+          actionEl.innerHTML = `<div class="narration-action" data-type="player">`
+            + `<strong>${esc(charName(charId))}</strong>`
+            + (_humanPills ? ` — ${_humanPills}` : "")
+            + ` — <em>${esc(fullDesc)}</em></div>`;
           feed.append(actionEl);
 
           if (chunk.attack_result || chunk.dice_results?.length) {
@@ -4514,10 +4752,11 @@ function wireSessionEvents(session, characters, root, campaignName = "") {
 
     const actionEl = document.createElement("div");
     actionEl.className = "narration-block nar-enter";
-    actionEl.innerHTML = `<div class="narration-action" data-type="${esc(actionType)}">
-      <strong>${esc(charName(charId))}</strong>
-      — <em>${esc(desc)}</em>
-    </div>`;
+    const _appendPills = actionPillsHTML(result && result.actions);
+    actionEl.innerHTML = `<div class="narration-action" data-type="player">`
+      + `<strong>${esc(charName(charId))}</strong>`
+      + (_appendPills ? ` — ${_appendPills}` : "")
+      + ` — <em>${esc(desc)}</em></div>`;
     feed.append(actionEl);
 
     if (result.attack_result || (result.dice_results && result.dice_results.length)) {

@@ -45,14 +45,14 @@ Mode = Literal["exploration", "combat"]
 
 def current_mode(events: list[Event]) -> Mode:
     """The most recent CombatStart / CombatEnd determines mode.
-    No CombatStart anywhere → exploration."""
-    mode: Mode = "exploration"
-    for e in events:
+    No CombatStart anywhere → exploration. Walks backward — the first
+    combat-transition event found from the end IS the most recent one."""
+    for e in reversed(events):
         if isinstance(e.payload, CombatStart):
-            mode = "combat"
-        elif isinstance(e.payload, CombatEnd):
-            mode = "exploration"
-    return mode
+            return "combat"
+        if isinstance(e.payload, CombatEnd):
+            return "exploration"
+    return "exploration"
 
 
 # ---------------------------------------------------------------------------
@@ -92,7 +92,11 @@ def initiative_order(events: list[Event]) -> list[tuple[str, int]]:
 # ---------------------------------------------------------------------------
 
 
-def next_actor(events: list[Event], pc_order: list[str]) -> str | None:
+def next_actor(
+    events: list[Event],
+    pc_order: list[str],
+    state=None,
+) -> str | None:
     """
     Decide whose turn is next.
 
@@ -115,8 +119,14 @@ def next_actor(events: list[Event], pc_order: list[str]) -> str | None:
     returns None.
 
     Returns None when there is nobody to act.
+
+    `state` (optional) — a pre-projected WorldState for these exact
+    events. Pass it when the caller has already projected (the M11
+    adapter/glue path projects several times per request); omitted, the
+    function projects for itself, exactly as before.
     """
-    state = project(events)
+    if state is None:
+        state = project(events)
     neutralized = _neutralized_set(state)
     if current_mode(events) == "combat":
         return _next_combat_actor(events, neutralized)
@@ -264,7 +274,10 @@ def should_end_combat(events: list[Event]) -> bool:
 
     # Path (b) — disengage: count trailing turns where no two
     # participants share a location.
-    if _disengage_turn_run_length(events, cs_idx, participants) >= config.DISENGAGE_TURN_WINDOW:
+    run = _disengage_turn_run_length(
+        events, cs_idx, participants, cap=config.DISENGAGE_TURN_WINDOW,
+    )
+    if run >= config.DISENGAGE_TURN_WINDOW:
         return True
 
     return False
@@ -274,6 +287,7 @@ def _disengage_turn_run_length(
     events: list[Event],
     cs_idx: int,
     participants: list[str],
+    cap: int | None = None,
 ) -> int:
     """How many of the most recent turns (since combat_start) had no
     PC participant sharing a location with any non-neutralized hostile
@@ -282,7 +296,12 @@ def _disengage_turn_run_length(
     NPC-vs-NPC co-location does NOT block disengage.
 
     Walks turns newest → oldest; stops counting at the first turn
-    where any PC shares a location with any live hostile."""
+    where any PC shares a location with any live hostile.
+
+    `cap` — stop counting once the run reaches this length. Each turn
+    counted costs a full projection of the log prefix, and the only
+    caller asks "is the run >= DISENGAGE_TURN_WINDOW?" — counting past
+    the window paid for projections whose answer changed nothing."""
     seen_turns: list[str] = []
     seen_set: set[str] = set()
     for e in reversed(events[cs_idx + 1:]):
@@ -301,6 +320,8 @@ def _disengage_turn_run_length(
 
     run = 0
     for tid in seen_turns:  # newest first
+        if cap is not None and run >= cap:
+            break
         idx = last_idx_for_turn[tid]
         state = project(events[: idx + 1])
 

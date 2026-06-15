@@ -164,7 +164,7 @@
         "hp": 28, "max_hp": 28, "ac": 16, "level": 3, "class": "fighter",
         "str": 16, "dex": 12, "con": 15, "int": 9, "wis": 11, "cha": 10,
         "str_mod": 3, "dex_mod": 1, "con_mod": 2, "int_mod": -1, "wis_mod": 0, "cha_mod": 0,
-        "attack_mod": 5, "weapon_damage": "1d8+3", "proficiency": 2, "coin": 10,
+        "attack_mod": 5, "weapon_damage": "1d8+3", "weapon_damage_type": "slashing", "proficiency": 2, "coin": 10,
         "persona": "A blunt, loyal half-orc mercenary. Solves problems with force first but is fiercely protective of allies. Speaks plainly."
       },
       "inventory": ["item_brakka_axe", "item_brakka_shield", "item_torch_1", "item_brakka_potion"]
@@ -178,7 +178,7 @@
         "hp": 18, "max_hp": 18, "ac": 13, "level": 3, "class": "rogue",
         "str": 9, "dex": 16, "con": 12, "int": 14, "wis": 13, "cha": 15,
         "str_mod": -1, "dex_mod": 3, "con_mod": 1, "int_mod": 2, "wis_mod": 1, "cha_mod": 2,
-        "attack_mod": 5, "weapon_damage": "1d6+3", "proficiency": 2, "coin": 60,
+        "attack_mod": 5, "weapon_damage": "1d6+3", "weapon_damage_type": "piercing", "proficiency": 2, "coin": 60,
         "persona": "A quick-witted halfling scout and negotiator. Prefers talking, sneaking, and clever angles over open fights. Curious to a fault."
       },
       "inventory": ["item_sylvi_daggers", "item_sylvi_tools"]
@@ -225,6 +225,8 @@
       "location_id": "loc_warrens",
       "attributes": {
         "hp": 16, "max_hp": 16, "ac": 13, "attack_mod": 4, "weapon_damage": "1d6+2", "dex_mod": 3,
+        "resistances": ["piercing"],
+        "applies_condition": {"condition": "poisoned", "save": "con", "dc": 12, "duration": 3},
         "status": "hostile", "disposition": "ambush",
         "tactics": "A blind cave-ghoul that hunts by sound. Stays hidden among the niches until a loud or lit target comes close, then lunges. A quiet, careful party can pass it entirely; bright light or a successful stealth approach denies it the ambush. Flees into the bones at one quarter HP.",
         "negotiation_levers": "Not intelligent enough to bargain; driven off by fire or a strong show of force.",
@@ -302,11 +304,16 @@
       "kind": "npc",
       "location_id": "loc_boss_hall",
       "attributes": {
-        "hp": 26, "max_hp": 26, "ac": 14, "attack_mod": 4, "weapon_damage": "1d8+2", "dex_mod": 0,
+        "hp": 26, "max_hp": 26, "ac": 14, "attack_mod": 4, "weapon_damage": "1d8+2", "weapon_damage_type": "fire", "dex_mod": 0,
+        "immunities": ["fire", "poison"],
+        "area_attack": {
+          "save": "dex", "dc": 12, "damage": "2d4", "damage_type": "fire",
+          "applies_condition": {"condition": "blinded", "duration": 1}
+        },
         "status": "hostile", "disposition": "lawful_hostile",
         "movement_restricted": "bound to the Hall of Cinders by the King's binding",
         "persona": "An old guardian-construct of fused armor and banked coals. Speaks rarely, in short scorched sentences. Half-spent but dutiful to the last.",
-        "tactics": "Stands between the party and the reliquary door. Warns intruders once to turn back, then attacks if they advance, attack, or try to pass. Focuses the most heavily armored target. Half-spent and slow - a coordinated two-person party can put it down. Bound to the hall and cannot pursue beyond it.",
+        "tactics": "Stands between the party and the reliquary door. Warns intruders once to turn back, then attacks if they advance, attack, or try to pass. Its attack is a sweeping wave of cinders that washes over EVERYONE in the hall - it cannot single anyone out. Half-spent and slow - a coordinated two-person party can put it down. Bound to the hall and cannot pursue beyond it.",
         "negotiation_levers": "Almost none - it is too far gone to bargain and its binding compels it. A party that flees back out empty-handed is not pursued, but it will never simply hand over the Heart.",
         "goals": [
           "Guard the reliquary door at the end of the Hall of Cinders - this is your binding and your whole remaining purpose.",

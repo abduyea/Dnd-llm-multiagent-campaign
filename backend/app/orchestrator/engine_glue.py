@@ -53,7 +53,7 @@ import m11_adapter as adapter  # noqa: E402
 import scheduler  # noqa: E402
 from m2_inspect import MeasurementSink  # noqa: E402
 from projection import project  # noqa: E402
-from runner import run_npc_turn, run_turn  # noqa: E402
+from runner import is_dying_pc, run_death_save_turn, run_npc_turn, run_turn  # noqa: E402
 from summarizer import GlobalSummaryFilter, maybe_summarize  # noqa: E402
 from view_builder import build_view  # noqa: E402
 
@@ -98,6 +98,9 @@ class EngineHandle:
     player_agents: dict[str, Any] = field(default_factory=dict)
     # Party goals (for AI player prompts); loaded from the bound dungeon.
     goals: list = field(default_factory=list)
+    # Ruleset id (from the campaign registry) — threaded into every runner
+    # call and agent prompt so a coc_lite session resolves d100, not d20.
+    ruleset: str = "dnd5e_lite"
     # Global summarizer: collapses old narrative beats into a SummaryCreated
     # when a PC's prompt grows over budget, so long sessions don't bloat the
     # prompt (which was causing narration truncation). None until built.
@@ -179,11 +182,11 @@ async def _summarize_before_turn(
                     session_id)
 
 
-def _make_dm() -> Any:
+def _make_dm(ruleset: str = "dnd5e_lite") -> Any:
     """DM factory. Overridden in tests to avoid real LLM calls."""
     from dm import DMAgent
 
-    return DMAgent()
+    return DMAgent(ruleset_name=ruleset)
 
 
 def _make_summary_provider() -> Any:
@@ -221,13 +224,23 @@ def _get_player_agent(handle: EngineHandle, entity_id: str, state: Any) -> Any:
     ent = state.entities.get(entity_id)
     persona = ent.attributes.get("persona", "") if ent is not None else ""
     name = ent.display_name if ent is not None else entity_id
-    role = (
-        f"You are {name}. {persona} You and your party are exploring a "
-        f"dungeon. Speak and act in character."
-    )
+    if handle.ruleset == "coc_lite":
+        # Same genre framing the offline coc_demo driver uses.
+        role = (
+            f"You are {name}. {persona} You are an investigator in 1920s "
+            f"Arkham — this is Call of Cthulhu, not heroic fantasy. You are "
+            f"fragile, the dark is dangerous, and your skills (percentile "
+            f"checks) matter more than force. Speak and act in character."
+        )
+    else:
+        role = (
+            f"You are {name}. {persona} You and your party are exploring a "
+            f"dungeon. Speak and act in character."
+        )
     agent = PlayerAgent(
         player_id=entity_id, role_description=role,
         model=DEFAULT_MODEL, goals=handle.goals,
+        ruleset_name=handle.ruleset,
     )
     handle.player_agents[entity_id] = agent
     return agent
@@ -360,16 +373,19 @@ async def load_session_engine(
     campaign = (
         await db.execute(select(Campaign).where(Campaign.id == session.campaign_id))
     ).scalar_one_or_none()
+    campaign_name = campaign.name if campaign is not None else None
+    ruleset = adapter.ruleset_for_campaign(campaign_name)
     handle = EngineHandle(
         session_id=session_id,
         log=log,
         id_map=id_map,
         entity_to_char=_inverse(id_map),
-        dm=_make_dm(),
+        dm=_make_dm(ruleset),
         rng=random.Random(),  # noqa: S311 - game simulation RNG, not security-sensitive
         human_seats=set(id_map.values()),
-        goals=_goals_for(campaign.name if campaign is not None else None),
+        goals=_goals_for(campaign_name),
         summary_provider=_make_summary_provider(),
+        ruleset=ruleset,
     )
     _attach_logging(handle)
     _HANDLES[session_id] = handle
@@ -426,16 +442,20 @@ async def start_session_impl(
         )
         await _persist_events(db, session_id, log, 0)
         await _sync_hp(db, log, id_map)
+        ruleset = adapter.ruleset_for_campaign(
+            campaign.name if campaign is not None else None
+        )
         handle = EngineHandle(
             session_id=session_id,
             log=log,
             id_map=id_map,
             entity_to_char=_inverse(id_map),
-            dm=_make_dm(),
+            dm=_make_dm(ruleset),
             rng=random.Random(),  # noqa: S311 - game simulation RNG, not security-sensitive
             human_seats=set(id_map.values()),
             goals=_goals_for(campaign.name if campaign is not None else None),
             summary_provider=_make_summary_provider(),
+            ruleset=ruleset,
         )
         _attach_logging(handle)
         _HANDLES[session_id] = handle
@@ -512,6 +532,7 @@ async def resolve_human_action(
             actor_engine,
             target_engine,
             state,
+            ruleset=handle.ruleset,
             stat=getattr(action_input, "stat", None),
             purpose=getattr(action_input, "purpose", None),
         )
@@ -534,6 +555,7 @@ async def resolve_human_action(
         handle.rng,
         handle.measurements,
         handle.debug_log_path,
+        handle.ruleset,
     )
     _dump_measurements(handle)
 
@@ -582,7 +604,7 @@ async def resolve_human_action(
     # Skill-check outcome (roll vs DC, pass/fail) for the UI's result chip.
     # Parsed from the committed events, so the same call serves the AI path.
     response["check_result"] = adapter.extract_check_result(
-        handle.log, seq_before, seq_after
+        handle.log, seq_before, seq_after, ruleset=handle.ruleset
     )
     # Did this human action complete the adventure? (Surfaces the victory banner
     # the same way the all-AI loop's stop does.)
@@ -628,6 +650,39 @@ async def get_scene(
     # Engine-backed combat read-out (enemy HP / initiative / round).
     scene["combat"] = _combat_state(handle)
     return scene
+
+
+# Attribute keys that are engine bookkeeping / prose, not character-sheet stats.
+_SHEET_HIDDEN_ATTRS = frozenset({
+    "persona", "tactics", "goals", "negotiation_levers", "disposition",
+    "movement_restricted", "status", "conditions", "condition_meta",
+    "death_save_successes", "death_save_failures", "attack_skill",
+    "area_attack", "san_loss_on_hit", "applies_condition",
+    "resistances", "vulnerabilities", "immunities", "weapon_damage_type",
+})
+
+
+async def get_party_sheets(db: AsyncSession, session_id: str) -> dict[str, Any]:
+    """Per-PC engine attributes for the character sheet, keyed by roster
+    character id. Lets a CoC session show the investigator's REAL
+    characteristics (sanity_pct, skills) instead of the D&D ability columns the
+    `characters` table stores. Ruleset-agnostic: the frontend decides how to
+    render based on the returned ``ruleset``."""
+    handle = await load_session_engine(db, session_id)
+    if handle is None:
+        return {"error": "This session has no engine world.", "status": 422}
+    state = project(handle.log.events())
+    sheets: dict[str, Any] = {}
+    for char_id, entity_id in handle.id_map.items():
+        ent = state.entities.get(entity_id)
+        if ent is None:
+            continue
+        attrs = {
+            k: v for k, v in ent.attributes.items()
+            if k not in _SHEET_HIDDEN_ATTRS
+        }
+        sheets[char_id] = {"name": ent.display_name, "attributes": attrs}
+    return {"ruleset": handle.ruleset, "sheets": sheets}
 
 
 async def set_seats(
@@ -710,7 +765,7 @@ async def advance_one_turn(db: AsyncSession, session_id: str) -> dict[str, Any]:
                 "next_turn": _next_turn_info(handle)}
 
     info = _next_turn_info(handle)
-    if info["engine_id"] is None or info["is_human"]:
+    if info["engine_id"] is None:
         return {"ran": False, "next_turn": info}
 
     actor = info["engine_id"]
@@ -720,14 +775,38 @@ async def advance_one_turn(db: AsyncSession, session_id: str) -> dict[str, Any]:
         return {"ran": False, "next_turn": info}
     loc = ent.location_id
 
-    # Cap the prompt before an AI PC plans (no-op for NPCs / under budget).
-    await _summarize_before_turn(db, session_id, handle, actor)
+    # M12: a dying PC (unconscious, still rolling death saves) has no decision to
+    # make — the runner just rolls its death save. Handle this BEFORE the
+    # human-seat early-return (so an unconscious human's turn doesn't stall the
+    # table waiting for input it cannot give) AND before any prompt
+    # summarization / LLM planning (an AI hero must not "think" on a turn it
+    # cannot take).
+    dying = info["kind"] == "pc" and is_dying_pc(ent)
+
+    if not dying and info["is_human"]:
+        return {"ran": False, "next_turn": info}
+
+    # Cap the prompt before an AI PC plans (no-op for NPCs / under budget). A
+    # death-save turn renders no prompt, so summarization is skipped.
+    if not dying:
+        await _summarize_before_turn(db, session_id, handle, actor)
 
     seq_before = len(handle.log)
-    if info["kind"] == "npc":
+    # The real intent verbs for this turn's UI pills — set only on the AI path
+    # (the others let the adapter derive from events). None ⇒ derive.
+    turn_actions: list[str] | None = None
+    if dying:
+        tr = await asyncio.to_thread(
+            run_death_save_turn, handle.log, actor, loc, handle.rng,
+            ruleset=handle.ruleset,
+        )
+        turn_char_id = info["actor_id"]  # a real roster character id
+        action_label = "death_save"
+    elif info["kind"] == "npc":
         tr = await asyncio.to_thread(
             run_npc_turn, handle.log, actor, loc, handle.dm, handle.rng,
             handle.measurements, debug_log_path=handle.debug_log_path,
+            ruleset=handle.ruleset,
         )
         turn_char_id = None  # NPC: not a roster character
         action_label = "npc_turn"
@@ -735,19 +814,26 @@ async def advance_one_turn(db: AsyncSession, session_id: str) -> dict[str, Any]:
         # AI-controlled PC seat: the engine plays the hero via a PlayerAgent
         # (the same agent that drives our autonomous demos).
         agent = _get_player_agent(handle, actor, state)
+        # Capture the AI's actual intent plan so the UI can show every verb it
+        # took ("Move, Talk") — talk emits no event, so it can't be recovered
+        # from the log; it must come from the PlayerTurnResult.
+        _ai_actions: list[str] = []
 
         def _run_ai_pc() -> Any:
             view = build_view(handle.log.events(), actor)
             st = project(handle.log.events())
             turn_result = agent.act(view, st)
+            _ai_actions[:] = [i.type for i in turn_result.intents]
             return run_turn(
                 handle.log, actor, loc, turn_result, handle.dm, handle.rng,
                 handle.measurements, debug_log_path=handle.debug_log_path,
+                ruleset=handle.ruleset,
             )
 
         tr = await asyncio.to_thread(_run_ai_pc)
         turn_char_id = info["actor_id"]  # a real roster character id
         action_label = "ai_turn"
+        turn_actions = _ai_actions
 
     _dump_measurements(handle)
     if tr is not None and not tr.succeeded:
@@ -766,7 +852,7 @@ async def advance_one_turn(db: AsyncSession, session_id: str) -> dict[str, Any]:
     response = adapter.events_to_response(
         handle.log, seq_before, len(handle.log), handle.entity_to_char,
         {"turn_number": turn_no, "character_id": info["actor_id"],
-         "action_type": action_label, "description": ""},
+         "action_type": action_label, "actions": turn_actions, "description": ""},
     )
     # Attribute the engine turn to its actor so the UI can surface "who" —
     # an NPC's dialogue/beat or an AI hero's turn, not anonymous narration.
@@ -779,7 +865,7 @@ async def advance_one_turn(db: AsyncSession, session_id: str) -> dict[str, Any]:
     # An AI hero (or NPC) may make a skill check too — surface its verdict the
     # same way the human path does, so the chip isn't human-only.
     response["check_result"] = adapter.extract_check_result(
-        handle.log, seq_before, len(handle.log)
+        handle.log, seq_before, len(handle.log), ruleset=handle.ruleset
     )
     # Did this engine turn complete the adventure? (Surface the win on the
     # completing turn itself, not just on the next advance's idle.)
@@ -832,6 +918,8 @@ async def advance_stream_impl(session_id: str, db: AsyncSession):
         # what the hero "said/did" at the table, not just the DM's outcome.
         "actor_prose": turn.get("actor_prose", ""),
         "action_type": turn["action_type"],
+        "primary_action": turn.get("primary_action"),
+        "actions": turn.get("actions"),
         "description": turn["description"],
         "dice_results": turn["dice_results"],
         "attack_result": turn["attack_result"],
@@ -873,6 +961,8 @@ async def process_action_stream_impl(action_input: Any, db: AsyncSession):
             "turn_number": response["turn_number"],
             "character_id": response["character_id"],
             "action_type": response["action_type"],
+            "primary_action": response.get("primary_action"),
+            "actions": response.get("actions"),
             "description": response["description"],
             "dice_results": response["dice_results"],
             "attack_result": response["attack_result"],

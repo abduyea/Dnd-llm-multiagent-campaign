@@ -99,6 +99,10 @@ async function getSessionTurns(id) {
 async function getScene(sessionId, characterId) {
   return _fetch(`/sessions/${sessionId}/scene?character_id=${encodeURIComponent(characterId)}`);
 }
+// Per-PC engine attributes (+ ruleset) for the character sheet (CoC vs D&D).
+async function getPartySheets(sessionId) {
+  return _fetch(`/sessions/${sessionId}/sheets`);
+}
 async function deleteSession(id) {
   const res = await fetch(API_BASE + `/sessions/${id}`, { method: "DELETE" });
   if (!res.ok) {
@@ -205,8 +209,10 @@ async function advanceStream(sessionId, onChunk) {
 }
 
 // ── Demo ────────────────────────────────────────────────
-async function createDemoCampaign() {
-  return _fetch("/campaigns/demo", { method: "POST", body: "{}" });
+async function createDemoCampaign(ruleset = "dnd5e_lite") {
+  return _fetch(`/campaigns/demo?ruleset=${encodeURIComponent(ruleset)}`, {
+    method: "POST", body: "{}",
+  });
 }
 
 // ── Stats ────────────────────────────────────────────────

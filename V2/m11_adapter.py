@@ -30,9 +30,18 @@ import config
 import scheduler
 from eventlog import EventLog
 from llm import ChatResult
-from models import DiceRolled, DMNarration, Event, PlayerAction
+from models import (
+    DiceRolled,
+    DMNarration,
+    EntityMoved,
+    Event,
+    InventoryAdded,
+    InventoryRemoved,
+    PlayerAction,
+)
 from player import PlayerTurnResult
 from projection import project
+from mechanics import get_mechanics
 from ruleset import get_action_economy
 from runner import _derive_dc, run_turn
 from seed import load_seed
@@ -47,6 +56,22 @@ HERE = Path(__file__).resolve().parent
 DEMO_CAMPAIGN_NAME = "The Sunken Vault"
 DEMO_DUNGEON = HERE / "demo_dungeon_m95.json"
 RULESET = "dnd5e_lite"
+
+# CoC demo: importing `coc` registers the coc_lite schema/economy/mechanics in
+# the three ruleset registries (invariant 8) — required before a coc_lite seed
+# can load.
+import coc  # noqa: E402, F401
+
+COC_CAMPAIGN_NAME = "The Boarding House on Halsey Street"
+COC_SCENARIO = HERE / "coc_scenario.json"
+
+# Campaign-name → (bound scenario seed, ruleset id). The glue resolves both
+# per session from the campaign's name; everything downstream (runner calls,
+# agent prompts, action economy) threads the ruleset id.
+_CAMPAIGNS: dict[str, dict[str, Any]] = {
+    DEMO_CAMPAIGN_NAME.lower(): {"dungeon": DEMO_DUNGEON, "ruleset": "dnd5e_lite"},
+    COC_CAMPAIGN_NAME.lower(): {"dungeon": COC_SCENARIO, "ruleset": "coc_lite"},
+}
 
 # Action types the Human controller can translate. attack/talk (stage 1),
 # movement (stage 2), roleplay (stage 2b), skill_check (1d20+stat vs a derived
@@ -76,6 +101,12 @@ _NON_CHECK_DC_PURPOSES = frozenset({"lock", "force"})
 DEMO_PC_ALIASES: dict[str, str] = {
     "brakka": "ent_pc_brakka",
     "sylvi": "ent_pc_sylvi",
+    # CoC demo roster (The Boarding House on Halsey Street). NB the matcher
+    # takes the FIRST token of the DB character name, so the roster authors
+    # "Eleanor Voss" (no "Dr." honorific — that lives on the engine entity's
+    # display_name only).
+    "eleanor": "ent_pc_eleanor",
+    "jack": "ent_pc_jack",
 }
 
 
@@ -96,11 +127,17 @@ class TranslationError(Exception):
 
 
 def dungeon_path_for_campaign(campaign_name: str | None) -> Path | None:
-    """Stage-1 dungeon binding: the demo campaign (by name) → the demo
-    dungeon. Any other campaign → None (not playable yet)."""
-    if (campaign_name or "").strip().lower() == DEMO_CAMPAIGN_NAME.lower():
-        return DEMO_DUNGEON
-    return None
+    """Campaign-name → bound scenario seed (the registry covers both demo
+    campaigns). Any other campaign → None (not playable yet)."""
+    entry = _CAMPAIGNS.get((campaign_name or "").strip().lower())
+    return entry["dungeon"] if entry else None
+
+
+def ruleset_for_campaign(campaign_name: str | None) -> str:
+    """Campaign-name → ruleset id. Unknown campaigns get the d20 default
+    (they have no engine world anyway)."""
+    entry = _CAMPAIGNS.get((campaign_name or "").strip().lower())
+    return entry["ruleset"] if entry else RULESET
 
 
 def load_seed_dict(path: Path | str) -> dict[str, Any]:
@@ -291,8 +328,10 @@ def human_submission_to_turn(
             raise TranslationError(
                 400, f"check target {target_engine_id!r} is not in your current scene"
             )
-        chk_stat = stat or "wis_mod"
-        if chk_stat not in SKILL_CHECK_STATS:
+        chk_stat = stat or ("spot_hidden_pct" if ruleset == "coc_lite" else "wis_mod")
+        # d20 rulesets gate on the closed *_mod set; percentile rulesets accept
+        # any `_pct` skill attribute (coc_lite resolves a missing skill to 0).
+        if chk_stat not in SKILL_CHECK_STATS and not chk_stat.endswith("_pct"):
             raise TranslationError(400, f"unknown ability {chk_stat!r}")
         offered = _dc_purposes(t_attrs, t_props)
         chk_purpose = purpose or (offered[0] if offered else None)
@@ -373,6 +412,7 @@ def run_human_turn(
     rng: Any,
     measurements: Any = None,
     debug_log_path: Any = None,
+    ruleset: str = RULESET,
 ) -> tuple[int, int]:
     """Run one validated human turn through our runner. Returns
     ``(seq_before, seq_after)`` delimiting the events this turn appended.
@@ -383,7 +423,7 @@ def run_human_turn(
     narration of the turn is still an LLM beat worth recording)."""
     seq_before = len(log)
     run_turn(log, actor_engine_id, location_id, turn_result, dm, rng,
-             measurements, debug_log_path=debug_log_path)
+             measurements, debug_log_path=debug_log_path, ruleset=ruleset)
     return seq_before, len(log)
 
 
@@ -403,6 +443,79 @@ def _parse_d20_mod(formula: str | None) -> int:
     if not m or not m.group(1):
         return 0
     return int(m.group(1).replace(" ", ""))
+
+
+# Action labels the glue assigns to *engine* turns are generic — they say "an
+# NPC/AI acted", not *what* it did. These are the ones we re-derive a specific
+# verb for (a human turn already carries the pill type the player picked).
+_GENERIC_ACTION_LABELS = frozenset({"npc_turn", "ai_turn", "death_save", ""})
+
+
+def _derive_primary_action(turn_slice: list[Event], fallback: str) -> str:
+    """The verb that best labels a turn, for the UI's at-a-glance action glyph.
+
+    A human turn already carries a specific pill type (``attack_melee`` /
+    ``movement`` / ``skill_check`` / …) — use it as-is. An engine turn only
+    carries a generic label (``npc_turn`` / ``ai_turn`` / ``death_save``), so
+    read the committed payloads to recover the real verb. Closed vocabulary
+    (invariant 6) means a short, exhaustive scan: dice reasons distinguish
+    attack vs check, ``EntityMoved`` is a move, inventory deltas are item use,
+    and a narration-only beat is talk/look/examine/roleplay.
+    """
+    if fallback not in _GENERIC_ACTION_LABELS:
+        return fallback
+    moved = used_item = False
+    for e in turn_slice:
+        p = e.payload
+        if isinstance(p, DiceRolled):
+            if p.reason.startswith(("attack:", "area attack:")):
+                return "attack_melee"
+            # `check 'purpose' (stat): ...` or `check (stat): ...` — no colon
+            # right after the word (see mechanics.resolve_check reasons).
+            if p.reason.startswith("check "):
+                return "skill_check"
+        elif isinstance(p, EntityMoved):
+            moved = True
+        elif isinstance(p, (InventoryAdded, InventoryRemoved)):
+            used_item = True
+    if fallback == "death_save":
+        return "death_save"
+    if moved:
+        return "movement"
+    if used_item:
+        return "use_item"
+    return "talk"  # narration-only beat (talk / look / examine / roleplay)
+
+
+def _derive_actions(turn_slice: list[Event], fallback: str) -> list[str]:
+    """Every distinct verb a turn contained, in commit order — for the UI's
+    per-turn action pills ("Move, Talk").
+
+    This is the events-only fallback used when the caller did not thread the
+    real intent list. It can recover move/attack/check/item from committed
+    payloads, but **talk/look/examine emit no distinct payload** (narration
+    only), so a turn that *also* talked shows up here as just its mechanical
+    verb. For that reason the AI/human paths pass the actual intent types via
+    ``action_meta["actions"]`` (see ``events_to_response``); this derivation is
+    the best-effort path for NPC turns and any caller that doesn't.
+    """
+    out: list[str] = []
+    for e in turn_slice:
+        p = e.payload
+        if isinstance(p, DiceRolled):
+            if p.reason.startswith(("attack:", "area attack:")) and "attack" not in out:
+                out.append("attack")
+            elif p.reason.startswith("check ") and "check" not in out:
+                out.append("check")
+        elif isinstance(p, EntityMoved) and "move" not in out:
+            out.append("move")
+        elif isinstance(p, (InventoryAdded, InventoryRemoved)) and "use_item" not in out:
+            out.append("use_item")
+    if out:
+        return out
+    if fallback == "death_save":
+        return ["death_save"]
+    return ["talk"]  # narration-only beat
 
 
 def events_to_response(
@@ -468,11 +581,15 @@ def events_to_response(
     if attack_total is not None:
         mod = _parse_d20_mod(attack_formula)
         is_hit = damage_total is not None
+        natural_roll = attack_total - mod
         attack_result = {
             "is_hit": is_hit,
-            "is_critical": False,
+            # M12: a natural 20 is a critical hit (engine already doubled the
+            # damage dice); the frontend renders a "CRIT" chip from this.
+            # d20-only: a percentile attack roll of exactly 20 is not a crit.
+            "is_critical": natural_roll == 20 and (attack_formula or "").startswith("1d20"),
             "damage": damage_total or 0,
-            "natural_roll": attack_total - mod,
+            "natural_roll": natural_roll,
             "total_roll": attack_total,
         }
 
@@ -500,6 +617,13 @@ def events_to_response(
         "turn_number": action_meta["turn_number"],
         "character_id": action_meta["character_id"],
         "action_type": action_meta["action_type"],
+        # The specific verb for the UI action glyph — re-derived from the
+        # committed events when the turn's label is a generic engine one.
+        "primary_action": _derive_primary_action(turn_slice, action_meta["action_type"]),
+        # Every verb this turn contained, for the UI's action pills. The caller
+        # threads the real intent types when it has them (AI/human turns —
+        # required because talk emits no event); otherwise derive from events.
+        "actions": action_meta.get("actions") or _derive_actions(turn_slice, action_meta["action_type"]),
         "description": action_meta.get("description", ""),
         "dice_results": dice_results,
         "attack_result": attack_result,
@@ -515,6 +639,13 @@ def events_to_response(
 # ---------------------------------------------------------------------------
 # Combat read-out (engine-backed enemy HP + initiative + round)
 # ---------------------------------------------------------------------------
+
+
+def _as_int(value: Any, default: int = 0) -> int:
+    """Coerce an attribute to int (bool excluded), else `default`."""
+    if isinstance(value, int) and not isinstance(value, bool):
+        return value
+    return default
 
 
 def build_combat_state(
@@ -540,19 +671,23 @@ def build_combat_state(
       - ``enemies``   — the NPC subset (the encounter panel's enemy cards).
     """
     events = list(events)
+    # One projection serves this whole build — next_actor takes it as a
+    # param instead of re-projecting internally (this endpoint refreshes
+    # per UI poll, so the duplicate folds were the hot LLM-free path).
+    state = project(events)
     mode = scheduler.current_mode(events)
-    active_engine = scheduler.next_actor(events, pc_order)
+    active_engine = scheduler.next_actor(events, pc_order, state=state)
     active_id = entity_to_char.get(active_engine, active_engine) if active_engine else None
 
     if mode != "combat":
         return {"active": False, "round": 0, "active_id": active_id,
                 "order": [], "enemies": []}
 
-    state = project(events)
-    initiative = dict(scheduler.initiative_order(events))  # engine_id -> value
+    init_pairs = scheduler.initiative_order(events)  # one scan, used twice
+    initiative = dict(init_pairs)  # engine_id -> value
     # initiative_order is already sorted (init desc, id asc); any participant
     # without a roll (shouldn't happen — combat_start rolls for all) sorts last.
-    ordered_ids = [eid for eid, _ in scheduler.initiative_order(events)]
+    ordered_ids = [eid for eid, _ in init_pairs]
     for eid in scheduler.combat_participants(events):
         if eid not in initiative:
             ordered_ids.append(eid)
@@ -563,6 +698,18 @@ def build_combat_state(
         if ent is None:
             continue
         status = ent.attributes.get("status")
+        raw_conditions = ent.attributes.get("conditions")
+        conditions = [c for c in raw_conditions if isinstance(c, str)] \
+            if isinstance(raw_conditions, list) else []
+        # M12: a downed PC making death saves — surface the running tally so the
+        # panel can show "dying (1/2)". Only present while unconscious/stable.
+        death_saves = None
+        if status in ("unconscious", "stable"):
+            death_saves = {
+                "successes": _as_int(ent.attributes.get("death_save_successes")),
+                "failures": _as_int(ent.attributes.get("death_save_failures")),
+                "stable": status == "stable",
+            }
         order.append({
             "id": entity_to_char.get(eid, eid),
             "name": ent.display_name,
@@ -575,6 +722,8 @@ def build_combat_state(
             "initiative": initiative.get(eid),
             "is_active": eid == active_engine,
             "dead": status in config.NEUTRALIZED_STATUSES,
+            "conditions": conditions,  # M12: engine-tracked conditions
+            "death_saves": death_saves,  # M12: {successes, failures, stable} or None
         })
 
     enemies = [o for o in order if o["kind"] == "npc"]
@@ -593,20 +742,31 @@ def build_combat_state(
 # `extract_check_result` is caller-agnostic: it works for a HUMAN submission and
 # for an AI PlayerAgent's CheckIntent identically (the event log is the same).
 _CHECK_REASON_RE = re.compile(
-    r"check\s+(?:'([^']*)'\s+)?\(([^)]+)\):\s*\S+\s*->\s*(\S+)"
+    r"check\s+(?:'([^']*)'\s+)?\(([^)]+)\):\s*(\S+)\s*->\s*(\S+)"
 )
+
+
+def _humanize_stat(stat: str) -> str:
+    """`locksmith_pct` -> `Locksmith`, `wis_mod` -> `Wis`. Used for the
+    UI verdict chip so a raw skill id never reaches the screen."""
+    base = re.sub(r"_(pct|mod|save)$", "", stat or "")
+    return base.replace("_", " ").title()
 
 
 def extract_check_result(
     log: EventLog,
     seq_before: int,
     seq_after: int,
+    ruleset: str = RULESET,
 ) -> dict[str, Any] | None:
-    """Recover a skill check's outcome (roll total vs DC, pass/fail) for the UI,
-    from the committed events alone. The engine logs the d20 roll but NOT the DC
-    (it lives only in the internal CheckResolution), so re-derive the DC from
-    the target's post-turn attributes/properties — the same lookup the runner
-    used. Returns None if no check rolled this turn or the target has no DC.
+    """Recover a skill check's outcome (pass/fail + a human comparison string)
+    for the UI verdict chip, from the committed events alone. The engine logs
+    the roll but NOT the DC (it lives only in the internal CheckResolution), so
+    re-derive the DC from the target's post-turn attributes/properties — the
+    same lookup the runner used — then hand the roll + DC to the ruleset's
+    mechanics provider to interpret pass/fail (d20 roll-high vs d100 roll-under
+    differ; the provider owns that rule, keeping invariant 8). Returns None if
+    no check rolled this turn or the target has no DC.
 
     Works for any actor (human or AI), since it reads the check's `reason`
     rather than an in-hand intent. Surfaces the FIRST check in the slice."""
@@ -619,13 +779,22 @@ def extract_check_result(
         m = _CHECK_REASON_RE.match(p.reason)
         if m is None:
             continue
-        purpose, stat, target_id = (m.group(1) or ""), m.group(2), m.group(3)
+        purpose, stat = (m.group(1) or ""), m.group(2)
+        actor_id, target_id = m.group(3), m.group(4)
         _, attrs, props, _ = _resolve_check_target(target_id, after)
         dc = _derive_dc(purpose, attrs, props)
         if dc is None:
             return None
-        return {"stat": stat, "purpose": purpose, "total": p.result,
-                "dc": dc, "success": p.result >= dc}
+        actor = after.entities.get(actor_id)
+        if actor is None:
+            success, display = p.result >= dc, f"{p.result} vs DC {dc}"
+        else:
+            success, display = get_mechanics(ruleset).interpret_check(
+                actor, stat, dc, p.result
+            )
+        return {"stat": stat, "stat_label": _humanize_stat(stat),
+                "purpose": purpose, "total": p.result, "dc": dc,
+                "success": success, "display": display}
     return None
 
 

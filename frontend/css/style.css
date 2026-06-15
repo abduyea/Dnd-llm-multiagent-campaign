@@ -9801,8 +9801,7 @@ mark.search-hl {
 
 .narration-block:hover .narration-action strong {
   color: var(--dd-gold-bright) !important;
-  text-shadow: 0 0 10px rgba(212,170,80,0.2) !important;
-  transition: color 0.2s, text-shadow 0.2s !important;
+  transition: color 0.2s !important;
 }
 
 .dd-input[type="number"]::-webkit-inner-spin-button,
@@ -10706,9 +10705,8 @@ textarea.dd-input::-webkit-resizer {
 .narration-block:hover {
   background: rgba(212,170,80,0.015) !important;
 }
-.narration-block:hover .narration-action {
-  border-left-width: 3px !important;
-}
+/* (removed the hover border-width bump — it nudged the beat's text sideways on
+   hover, which read as the text shifting/resizing.) */
 
 .narration-block:hover .narration-dm {
   box-shadow: inset 3px 0 10px rgba(212,170,80,0.05) !important;

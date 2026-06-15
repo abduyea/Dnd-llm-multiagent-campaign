@@ -2,12 +2,41 @@
   "ruleset": "dnd5e_lite",
   "_comment": "The Sunken Vault of Mareth Dunn - a 15-room demo crawl for the multi-LLM D&D system. Each room is tagged in its description with the player capability it is designed to exercise: COMBAT, NEGOTIATION, PUZZLE, TEAMWORK, EXPLORATION, STEALTH, RESOURCE-MANAGEMENT, MORAL-CHOICE. Two pre-built player characters. Connections are authored bidirectionally so the graph is fully traversable.",
 
+  "_goals_comment": "Party objectives, in order. Render-time config only (never events). target_location is where the per-turn navigation hint steers; requires_item_held gates activation (the escape route stays hidden until someone holds the Heartstone); complete_when (location_reached | item_held) retires a goal so the next becomes active.",
+  "party_goals": [
+    {
+      "id": "reach_vault",
+      "text": "Descend through the dungeon to reach the Heart Vault, deep below.",
+      "target_location": "loc_inner_vault",
+      "complete_when": {"kind": "location_reached", "location": "loc_inner_vault"}
+    },
+    {
+      "id": "retrieve_heartstone",
+      "text": "Take the Heartstone from the Vault before the seal closes you in.",
+      "target_location": "loc_inner_vault",
+      "complete_when": {"kind": "item_held", "item": "item_heartstone"}
+    },
+    {
+      "id": "escape",
+      "text": "Escape with the Heartstone by climbing back to the surface.",
+      "target_location": "loc_surface",
+      "requires_item_held": "item_heartstone",
+      "complete_when": {"kind": "location_reached", "location": "loc_surface"}
+    }
+  ],
+
   "locations": [
     {
       "id": "loc_gatehouse",
       "name": "The Collapsed Gatehouse",
-      "description": "A ruined entry chamber open to a grey sky. Roots have split the flagstones and a toppled statue of a robed figure points one broken arm toward a stairwell descending into the dark. A weathered bronze plaque is bolted to the wall. [DEMO: EXPLORATION - safe starting room, encourages players to inspect surroundings and read lore before descending.]",
-      "connections": ["loc_antechamber"]
+      "description": "A ruined entry chamber open to a grey sky. Roots have split the flagstones and a toppled statue of a robed figure points one broken arm toward a stairwell descending into the dark. A weathered bronze plaque is bolted to the wall. A short climb up the rubble leads to the surface. [DEMO: EXPLORATION - safe starting room, encourages players to inspect surroundings and read lore before descending.]",
+      "connections": ["loc_antechamber", "loc_surface"]
+    },
+    {
+      "id": "loc_surface",
+      "name": "The Surface",
+      "description": "A wind-swept hillside above the vault. Grey clouds scud overhead and the ruined gatehouse sinks back into the slope behind you. From here the road runs back to safer country.",
+      "connections": ["loc_gatehouse"]
     },
     {
       "id": "loc_antechamber",
@@ -101,7 +130,7 @@
       "id": "ent_pc_brakka",
       "display_name": "Brakka Ironhide",
       "kind": "pc",
-      "location_id": "loc_gatehouse",
+      "location_id": "loc_surface",
       "attributes": {
         "hp": 28,
         "max_hp": 28,
@@ -127,7 +156,7 @@
       "id": "ent_pc_sylvi",
       "display_name": "Sylvi Quill",
       "kind": "pc",
-      "location_id": "loc_gatehouse",
+      "location_id": "loc_surface",
       "attributes": {
         "hp": 18,
         "max_hp": 18,
@@ -156,11 +185,11 @@
       "kind": "npc",
       "location_id": "loc_guardroom",
       "attributes": {
-        "hp": 13,
-        "max_hp": 13,
+        "hp": 7,
+        "max_hp": 7,
         "ac": 13,
-        "attack_mod": 4,
-        "weapon_damage": "1d6+2",
+        "attack_mod": 3,
+        "weapon_damage": "1d4+1",
         "dex_mod": 0,
         "status": "hostile",
         "disposition": "hostile",
@@ -179,11 +208,11 @@
       "kind": "npc",
       "location_id": "loc_guardroom",
       "attributes": {
-        "hp": 13,
-        "max_hp": 13,
+        "hp": 7,
+        "max_hp": 7,
         "ac": 13,
-        "attack_mod": 4,
-        "weapon_damage": "1d6+2",
+        "attack_mod": 3,
+        "weapon_damage": "1d4+1",
         "dex_mod": 0,
         "status": "hostile",
         "disposition": "hostile",
@@ -248,11 +277,11 @@
       "kind": "npc",
       "location_id": "loc_warden_hall",
       "attributes": {
-        "hp": 52,
-        "max_hp": 52,
+        "hp": 38,
+        "max_hp": 38,
         "ac": 15,
-        "attack_mod": 6,
-        "weapon_damage": "2d8+4",
+        "attack_mod": 4,
+        "weapon_damage": "1d10+3",
         "dex_mod": 0,
         "status": "hostile",
         "disposition": "lawful_hostile",
@@ -423,7 +452,7 @@
       "properties": {
         "type": "objective",
         "on_pickup": {
-          "start_countdown": {"attribute": "countdown_heartstone_escape", "turns": 5},
+          "start_countdown": {"attribute": "countdown_heartstone_escape", "turns": 8},
           "seal_location": "loc_inner_vault"
         }
       }
